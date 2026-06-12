@@ -13,13 +13,6 @@ struct DashboardView: View {
         controller.merged.filter { settings.isEnabled($0.agent.id) }
     }
 
-    /// Pace context from the first agent that has it (all agents share the same clock/config).
-    private var paceContext: (index: Int, workDays: Int)? {
-        for a in displayAgents {
-            if let p = a.pace { return (p.workDayIndex, a.config.workDays) }
-        }
-        return nil
-    }
 
     /// Windows (with their owning agent) that are credit pools projected to run dry before reset.
     private var depletionAlerts: [(agent: AgentSnapshot, window: WindowDTO)] {
@@ -62,14 +55,11 @@ struct DashboardView: View {
     }
 
     private var header: some View {
+        // No global "work day N of M": each agent's pace is relative to its own weekly reset
+        // (agents renew on different days), so the work day is shown per agent under its ring.
         HStack {
             Text("Today's pace").font(.headline)
             Spacer()
-            if let ctx = paceContext {
-                Text("Work day \(ctx.index) of \(ctx.workDays)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -150,21 +140,40 @@ private struct AgentRingView: View {
         return Model(fraction: 0, caption: "—", nsColor: .secondaryLabelColor, isError: false)
     }
 
+    @Environment(\.colorScheme) private var scheme
+
+    /// A metallic gold gradient for the surplus ring — built from golds that stay readable on the
+    /// current background (deeper in Light mode, brighter in Dark) so it reads premium without
+    /// washing out. Only the ring stroke uses it; the text and glyph use a solid readable gold.
+    private var goldRing: AngularGradient {
+        let stops: [Color] = scheme == .dark
+            ? [Color(red: 1.00, green: 0.90, blue: 0.50), Color(red: 0.93, green: 0.74, blue: 0.32),
+               Color(red: 1.00, green: 0.85, blue: 0.42), Color(red: 0.88, green: 0.68, blue: 0.26),
+               Color(red: 1.00, green: 0.90, blue: 0.50)]
+            : [Color(red: 0.78, green: 0.58, blue: 0.08), Color(red: 0.56, green: 0.42, blue: 0.04),
+               Color(red: 0.72, green: 0.53, blue: 0.06), Color(red: 0.48, green: 0.36, blue: 0.00),
+               Color(red: 0.78, green: 0.58, blue: 0.08)]
+        return AngularGradient(gradient: Gradient(colors: stops), center: .center)
+    }
+
     var body: some View {
         let m = model
         let color = Color(nsColor: m.nsColor)
+        let ringStyle: AnyShapeStyle = m.isError
+            ? AnyShapeStyle(Color.secondary.opacity(0.4))
+            : (m.isSurplus ? AnyShapeStyle(goldRing) : AnyShapeStyle(color))
+
         VStack(spacing: 6) {
             ZStack {
                 Circle()
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 5)
                 Circle()
                     .trim(from: 0, to: m.isError ? 1 : m.fraction)
-                    .stroke(m.isError ? Color.secondary.opacity(0.4) : color,
-                            style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .stroke(ringStyle, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     // Golden glow when you're a full day or more ahead of pace (surplus).
-                    .shadow(color: m.isSurplus ? color.opacity(0.9) : .clear, radius: 5)
-                    .shadow(color: m.isSurplus ? color.opacity(0.6) : .clear, radius: 9)
+                    .shadow(color: m.isSurplus ? color.opacity(0.8) : .clear, radius: 5)
+                    .shadow(color: m.isSurplus ? color.opacity(0.5) : .clear, radius: 9)
                 AgentGlyphView(agentID: snapshot.agent.id,
                                nsColor: m.isError ? .secondaryLabelColor : m.nsColor,
                                size: 24)
@@ -179,6 +188,12 @@ private struct AgentRingView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            if let pace = snapshot.pace, !snapshot.isError {
+                Text("day \(pace.workDayIndex)/\(snapshot.config.workDays)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity)
     }

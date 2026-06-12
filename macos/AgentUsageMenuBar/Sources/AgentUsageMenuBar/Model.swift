@@ -26,8 +26,9 @@ enum PaceColor: String, Codable {
     var nsColor: NSColor {
         switch self {
         case .surplus:
-            // A warm gold, distinct from the warning amber (higher green channel = golden, not orange).
-            return .paceAdaptive(light: (0.659, 0.498, 0.035), dark: (1.0, 0.835, 0.310))
+            // A warm gold, dark enough to read on the light popover, bright on dark. Higher
+            // green channel than the warning amber keeps it golden, not orange.
+            return .paceAdaptive(light: (0.557, 0.420, 0.039), dark: (1.0, 0.843, 0.345))
         case .green:
             return .paceAdaptive(light: (0.082, 0.502, 0.239), dark: (0.290, 0.871, 0.502))
         case .yellow:
@@ -83,6 +84,16 @@ struct AgentSnapshot: Codable, Identifiable {
     /// Most severe pace across all windows (drives the menu bar glyph tint).
     var worstPace: PaceColor {
         (windows ?? []).map(\.pace).max(by: { $0.severity < $1.severity }) ?? .green
+    }
+
+    /// Pace shown on the agent's glyph: anything needing attention dominates, otherwise a
+    /// surplus is celebrated (gold), otherwise green.
+    var displayPace: PaceColor {
+        let paces = (windows ?? []).map(\.pace)
+        if paces.contains(.red) { return .red }
+        if paces.contains(.yellow) { return .yellow }
+        if paces.contains(.surplus) { return .surplus }
+        return .green
     }
 }
 

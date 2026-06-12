@@ -40,21 +40,21 @@ enum AgentAssets {
         return image
     }
 
+    /// The untinted glyph (bundled logo fitted to `size`, or the SF Symbol fallback).
+    private static func baseGlyph(forID id: String, size: CGFloat) -> NSImage? {
+        if let logo = logo(forID: id) {
+            return fit(logo, to: size)
+        }
+        let cfg = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
+        return NSImage(systemSymbolName: symbolName(forID: id), accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg)
+    }
+
     /// An agent glyph recolored to `color` at `size` points, preferring the bundled logo and
     /// falling back to the SF Symbol. Used for menu bar drawing.
     static func tintedGlyph(forID id: String, color: NSColor, size: CGFloat) -> NSImage? {
-        let base: NSImage?
-        if let logo = logo(forID: id) {
-            base = fit(logo, to: size)
-        } else {
-            let cfg = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
-            base = NSImage(systemSymbolName: symbolName(forID: id), accessibilityDescription: nil)?
-                .withSymbolConfiguration(cfg)
-        }
-        guard let base else { return nil }
-
-        let dims = base.size
-        let tinted = NSImage(size: dims, flipped: false) { rect in
+        guard let base = baseGlyph(forID: id, size: size) else { return nil }
+        let tinted = NSImage(size: base.size, flipped: false) { rect in
             base.draw(in: rect)
             color.set()
             rect.fill(using: .sourceAtop)

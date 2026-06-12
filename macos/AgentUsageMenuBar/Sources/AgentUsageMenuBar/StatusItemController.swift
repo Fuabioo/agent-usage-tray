@@ -207,11 +207,11 @@ final class StatusItemController {
         segment(" │ ", color: .tertiaryLabelColor, font: font)
     }
 
-    /// Append a pace-tinted agent glyph.
+    /// Append a pace-tinted agent glyph (gold when the agent is in surplus, via displayPace).
     private static func appendGlyph(
         _ out: NSMutableAttributedString, agent: AgentSnapshot, font: NSFont, size: CGFloat
     ) {
-        let color = agent.isError ? NSColor.secondaryLabelColor : agent.worstPace.nsColor
+        let color = agent.isError ? NSColor.secondaryLabelColor : agent.displayPace.nsColor
         if let glyph = AgentAssets.tintedGlyph(forID: agent.agent.id, color: color, size: size) {
             out.append(attachment(glyph, font: font))
         }
