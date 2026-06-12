@@ -13,7 +13,7 @@ dashboard ideas, generalized so that adding an agent is a small, isolated change
 | Priority | Component                         | State                                            |
 | -------- | --------------------------------- | ------------------------------------------------ |
 | 1        | **`agent-usage` CLI**             | ✅ working — Claude (live), Codex (stub), `all`   |
-| 2        | macOS menu bar app                | ⏳ planned (Swift, consumes the CLI JSON)         |
+| 2        | **macOS menu bar app**            | ✅ working — multi-agent bar + dashboard + settings |
 | 3        | Linux COSMIC panel applet         | ⏳ planned (Rust/libcosmic, links the core)       |
 
 The UI target is `Agent Usage Prototype (standalone).html`: a multi-agent menu bar (each agent
@@ -39,6 +39,11 @@ crates/
                            - shared creds + tiny blocking HTTP helper (ureq)
   agent-usage-cli/         `agent-usage` binary: per-agent subcommands, one JSON/`--status`
                            contract for every agent.
+macos/
+  AgentUsageMenuBar/       macOS menu bar app (Swift/AppKit + SwiftUI). Spawns the bundled
+                           `agent-usage all --json`, renders a per-agent bar indicator + a
+                           dashboard popover (ring gauges, pace, burn-rate alerts) + settings.
+  build-app.sh             Build the CLI + Swift app and assemble AgentUsageMenuBar.app.
 ```
 
 **Why one normalized schema?** Agents measure usage differently. Claude reports rolling
@@ -108,6 +113,24 @@ them, even though no built-in provider uses it yet):
 - **Credit pool**: red if projected to deplete before reset (or `≥90%` used), yellow at `≥75%`,
   else green.
 
+## macOS menu bar app
+
+`macos/AgentUsageMenuBar` is a menu-bar-only (`LSUIElement`) Swift app that bundles and spawns
+the `agent-usage` CLI. The menu bar shows one segment per agent — the agent's glyph plus
+`weekly · session %`, tinted by pace — and clicking it opens the dashboard popover ("Today's
+pace · Work day N of M", a ring gauge per agent, a burn-rate alert banner for any credit pool
+projected to run dry, per-agent detail rows, Refresh + a settings gear). Right-click for
+Refresh / Settings / Launch at Login / Quit.
+
+```sh
+macos/build-app.sh                 # build CLI + app, assemble macos/build/AgentUsageMenuBar.app
+open macos/build/AgentUsageMenuBar.app
+```
+
+Requires the Swift toolchain (Xcode Command Line Tools) plus Rust. The app finds the CLI via
+`$AGENT_USAGE_BIN`, then its bundled `Resources/agent-usage`, then `PATH`. Settings (appearance,
+work-days budget, per-agent enable) persist in `UserDefaults`.
+
 ## Build & test
 
 ```sh
@@ -116,7 +139,7 @@ cargo test               # runs core + provider + CLI tests
 cargo run -p agent-usage-cli -- claude --json
 ```
 
-Requires a Rust toolchain. (No `just`/Homebrew packaging yet — that lands with the GUIs.)
+Requires a Rust toolchain. (No `just`/Homebrew packaging yet — that lands later.)
 
 ## License
 

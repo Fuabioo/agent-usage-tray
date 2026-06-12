@@ -2,6 +2,11 @@
 **/*.rs.bk
 Cargo.lock.bak
 
+# Swift / macOS build artifacts
+.build/
+macos/build/
+*.xcodeproj
+
 # macOS
 .DS_Store
 
