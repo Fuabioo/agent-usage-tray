@@ -30,11 +30,12 @@ enum AgentAssets {
     }
 
     private static func loadLogo(_ id: String) -> NSImage? {
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("\(id).png"),
+        // A vector PDF (rendered from the SVG), loaded as a resolution-independent
+        // NSPDFImageRep so the glyph stays crisp at any size. We tint it manually, so it is not
+        // a template image.
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("\(id).pdf"),
               let image = NSImage(contentsOf: url)
         else { return nil }
-        // We always tint manually (Core Graphics for the menu bar, a SwiftUI `.mask` for the
-        // dashboard), so the image stays a plain black-on-transparent bitmap — not a template.
         image.isTemplate = false
         return image
     }
@@ -74,29 +75,22 @@ enum AgentAssets {
     }
 }
 
-/// SwiftUI agent glyph: the bundled logo (tinted) or the SF Symbol fallback.
+/// SwiftUI agent glyph. Renders through the same Core Graphics path the menu bar uses — drawing
+/// the vector logo at the target size and tinting it — so the dashboard glyphs are as crisp as
+/// the bar. Falls back to an SF Symbol for agents without a bundled logo.
 struct AgentGlyphView: View {
     let agentID: String
-    let color: Color
+    let nsColor: NSColor
     var size: CGFloat = 16
 
     var body: some View {
-        if let logo = AgentAssets.logo(forID: agentID) {
-            // Tint by masking a solid color with the full-resolution logo. This keeps SwiftUI's
-            // high-quality downscaling (unlike `.renderingMode(.template)`, which rasterizes the
-            // mask coarsely and looks grainy at small sizes).
-            color
+        if let glyph = AgentAssets.tintedGlyph(forID: agentID, color: nsColor, size: size) {
+            Image(nsImage: glyph)
                 .frame(width: size, height: size)
-                .mask(
-                    Image(nsImage: logo)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                )
         } else {
             Image(systemName: AgentAssets.symbolName(forID: agentID))
                 .font(.system(size: size, weight: .semibold))
-                .foregroundStyle(color)
+                .foregroundStyle(Color(nsColor: nsColor))
         }
     }
 }

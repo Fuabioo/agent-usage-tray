@@ -117,6 +117,7 @@ private struct AgentRingView: View {
     }
 
     private var color: Color { primary?.pace.swiftUIColor ?? Color.secondary }
+    private var nsColor: NSColor { primary?.pace.nsColor ?? .secondaryLabelColor }
 
     /// Headline under the ring: "out ~Thu" for a depleting pool, else "N% left", else "error".
     private var caption: String {
@@ -139,7 +140,7 @@ private struct AgentRingView: View {
                             style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 AgentGlyphView(agentID: snapshot.agent.id,
-                               color: snapshot.isError ? Color.secondary : color,
+                               nsColor: snapshot.isError ? .secondaryLabelColor : nsColor,
                                size: 18)
             }
             .frame(width: 52, height: 52)

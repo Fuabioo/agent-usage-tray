@@ -37,14 +37,13 @@ cp "$APP_BIN" "$APP/Contents/MacOS/AgentUsageMenuBar"
 cp "$CLI" "$APP/Contents/Resources/agent-usage"
 cp "$PKG/Resources/Info.plist" "$APP/Contents/Info.plist"
 
-# Bundle per-agent logos. These are committed transparent-black template PNGs (regenerate from
-# the SVGs with macos/render-logos.sh when a logo changes). The app loads <agent-id>.png from
-# Resources and tints it per pace.
+# Bundle per-agent logos as vector PDFs (regenerate from the SVGs with macos/render-logos.sh
+# when a logo changes). The app loads <agent-id>.pdf from Resources and tints it per pace.
 AGENTS_DIR="$PKG/Resources/agents"
 if [ -d "$AGENTS_DIR" ]; then
-  for png in "$AGENTS_DIR"/*.png; do
-    [ -e "$png" ] || continue
-    cp "$png" "$APP/Contents/Resources/$(basename "$png")"
+  for pdf in "$AGENTS_DIR"/*.pdf; do
+    [ -e "$pdf" ] || continue
+    cp "$pdf" "$APP/Contents/Resources/$(basename "$pdf")"
   done
 fi
 

@@ -61,7 +61,7 @@ struct SettingsView: View {
                             set: { settings.setEnabled($0, agentID: agent.id) }
                         )) {
                             HStack(spacing: 8) {
-                                AgentGlyphView(agentID: agent.id, color: .primary, size: 15)
+                                AgentGlyphView(agentID: agent.id, nsColor: .labelColor, size: 15)
                                     .frame(width: 16)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(agent.label).font(.callout)
