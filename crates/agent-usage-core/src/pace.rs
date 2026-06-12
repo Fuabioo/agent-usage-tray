@@ -9,7 +9,7 @@
 //! agent-agnostic core stays bug-for-bug compatible with the behavior users already trust.
 
 use crate::schema::{Window, WindowKind};
-use chrono::{DateTime, Datelike, Utc, Weekday};
+use chrono::{DateTime, Datelike, Local, TimeZone, Utc, Weekday};
 
 const CYCLE_LENGTH: i64 = 7;
 
@@ -57,11 +57,22 @@ pub fn compute_weekly_pace_color(
     resets_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> PaceColor {
+    weekly_pace_color_in(utilization, daily_budget, work_days, resets_at, now, &Local)
+}
+
+fn weekly_pace_color_in<Tz: TimeZone>(
+    utilization: f64,
+    daily_budget: f64,
+    work_days: u8,
+    resets_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+    tz: &Tz,
+) -> PaceColor {
     if daily_budget <= 0.0 {
         return PaceColor::Red; // defensive
     }
 
-    let work_day_index = days_into_cycle(resets_at, now, work_days);
+    let work_day_index = work_days_elapsed(resets_at, now, work_days, tz);
     let ceiling = work_day_index as f64 * daily_budget;
     let remaining = ceiling - utilization;
 
@@ -102,35 +113,51 @@ pub fn compute_pool_color(used_pct: f64, depletes_before_reset: bool) -> PaceCol
     }
 }
 
-/// Counts work days elapsed up to the current (possibly incomplete) period.
+/// Counts work days elapsed in the cycle, in the user's **local** timezone.
 ///
-/// For `work_days <= 5` only weekdays (Mon–Fri) count; for `work_days > 5` all calendar days
-/// count. The cycle starts at `resets_at - 7 days`; the current partial day is included so
-/// today's budget contributes to the ceiling. Result is clamped to `[1, work_days]`.
+/// The cycle starts at `resets_at - 7 days`; work days are counted as distinct **local calendar
+/// dates** from the cycle start through today, inclusive. For `work_days <= 5` only Mon–Fri
+/// count; for `work_days > 5` every day counts. Result is clamped to `[1, work_days]`.
+///
+/// Using the local calendar (not UTC) is what makes "day N/M" match the wall clock: a reset at,
+/// say, 8 pm local lands on a different *UTC* date, so UTC counting is off by one (Friday would
+/// read as day 4 of a Mon-reset 5-day week instead of day 5).
 pub fn days_into_cycle(resets_at: DateTime<Utc>, now: DateTime<Utc>, work_days: u8) -> u8 {
-    let cycle_start = resets_at - chrono::Duration::days(CYCLE_LENGTH);
+    work_days_elapsed(resets_at, now, work_days, &Local)
+}
 
+fn work_days_elapsed<Tz: TimeZone>(
+    resets_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+    work_days: u8,
+    tz: &Tz,
+) -> u8 {
+    let cycle_start = resets_at - chrono::Duration::days(CYCLE_LENGTH);
     if now <= cycle_start {
         return 1;
     }
 
-    let completed = (now - cycle_start).num_days().min(CYCLE_LENGTH) as u64;
-    let total_periods = (completed + 1).min(CYCLE_LENGTH as u64);
+    let start = cycle_start.with_timezone(tz).date_naive();
+    let today = now.with_timezone(tz).date_naive();
 
-    if work_days > 5 {
-        return (total_periods as u8).clamp(1, work_days);
-    }
-
-    let mut weekday_count = 0u8;
-    for i in 0..total_periods {
-        let period_start = cycle_start + chrono::Duration::days(i as i64);
-        match period_start.weekday() {
-            Weekday::Sat | Weekday::Sun => {}
-            _ => weekday_count += 1,
+    let mut count: u8 = 0;
+    let mut day = start;
+    // At most one cycle's worth of calendar days (guards against stale `now`).
+    for _ in 0..=CYCLE_LENGTH {
+        if day > today {
+            break;
+        }
+        let weekend = matches!(day.weekday(), Weekday::Sat | Weekday::Sun);
+        if work_days > 5 || !weekend {
+            count = count.saturating_add(1);
+        }
+        match day.succ_opt() {
+            Some(next) => day = next,
+            None => break,
         }
     }
 
-    weekday_count.clamp(1, work_days)
+    count.clamp(1, work_days)
 }
 
 /// The reset day as "Wed Apr 1, 3:00 PM" in the local timezone.
@@ -153,40 +180,40 @@ pub fn default_window_color(window: &Window) -> PaceColor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{FixedOffset, TimeZone};
 
     fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()
+    }
+
+    // The public functions use the machine's local timezone; the tests pin a fixed timezone so
+    // they're deterministic regardless of where they run.
+    fn wpc(u: f64, b: f64, wd: u8, r: DateTime<Utc>, n: DateTime<Utc>) -> PaceColor {
+        weekly_pace_color_in(u, b, wd, r, n, &Utc)
+    }
+    fn wde(r: DateTime<Utc>, n: DateTime<Utc>, wd: u8) -> u8 {
+        work_days_elapsed(r, n, wd, &Utc)
     }
 
     #[test]
     fn day1_zero_is_green() {
         let now = utc(2024, 3, 7, 12, 0);
         let resets = utc(2024, 3, 14, 9, 0);
-        assert_eq!(
-            compute_weekly_pace_color(0.0, 20.0, 5, resets, now),
-            PaceColor::Green
-        );
+        assert_eq!(wpc(0.0, 20.0, 5, resets, now), PaceColor::Green);
     }
 
     #[test]
     fn day1_over_ceiling_is_red() {
         let now = utc(2024, 3, 7, 12, 0);
         let resets = utc(2024, 3, 14, 9, 0);
-        assert_eq!(
-            compute_weekly_pace_color(22.0, 20.0, 5, resets, now),
-            PaceColor::Red
-        );
+        assert_eq!(wpc(22.0, 20.0, 5, resets, now), PaceColor::Red);
     }
 
     #[test]
     fn zero_budget_is_red() {
         let now = utc(2024, 3, 7, 12, 0);
         let resets = utc(2024, 3, 14, 9, 0);
-        assert_eq!(
-            compute_weekly_pace_color(10.0, 0.0, 5, resets, now),
-            PaceColor::Red
-        );
+        assert_eq!(wpc(10.0, 0.0, 5, resets, now), PaceColor::Red);
     }
 
     // Cycle: resets Thu Mar 14 09:00, started Thu Mar 7. Tue Mar 12 = work day 4 (Thu, Fri,
@@ -197,15 +224,12 @@ mod tests {
         let resets = utc(2024, 3, 14, 9, 0);
         // 60% used = exactly day-3's ceiling; a whole day's budget (20%) still available.
         assert_eq!(
-            compute_weekly_pace_color(60.0, 20.0, 5, resets, now),
+            wpc(60.0, 20.0, 5, resets, now),
             PaceColor::Green,
             "a full day under pace must be green, not a warning"
         );
         // Still green with more than half a day's budget left (remaining 15 > 0.5*20).
-        assert_eq!(
-            compute_weekly_pace_color(65.0, 20.0, 5, resets, now),
-            PaceColor::Green
-        );
+        assert_eq!(wpc(65.0, 20.0, 5, resets, now), PaceColor::Green);
     }
 
     #[test]
@@ -213,20 +237,11 @@ mod tests {
         let now = utc(2024, 3, 12, 12, 0); // work day 4, ceiling 80
         let resets = utc(2024, 3, 14, 9, 0);
         // 5% used at day 4 -> remaining 75 (≥ 2 days banked) -> surplus.
-        assert_eq!(
-            compute_weekly_pace_color(5.0, 20.0, 5, resets, now),
-            PaceColor::Surplus
-        );
+        assert_eq!(wpc(5.0, 20.0, 5, resets, now), PaceColor::Surplus);
         // Exactly one full day ahead (remaining 40 = 2*daily) -> surplus.
-        assert_eq!(
-            compute_weekly_pace_color(40.0, 20.0, 5, resets, now),
-            PaceColor::Surplus
-        );
+        assert_eq!(wpc(40.0, 20.0, 5, resets, now), PaceColor::Surplus);
         // Just under one day ahead (remaining 39) -> green, not surplus.
-        assert_eq!(
-            compute_weekly_pace_color(41.0, 20.0, 5, resets, now),
-            PaceColor::Green
-        );
+        assert_eq!(wpc(41.0, 20.0, 5, resets, now), PaceColor::Green);
     }
 
     #[test]
@@ -234,24 +249,12 @@ mod tests {
         let now = utc(2024, 3, 12, 12, 0); // work day 4, ceiling 80
         let resets = utc(2024, 3, 14, 9, 0);
         // remaining 8 (between a quarter and half a day) -> yellow.
-        assert_eq!(
-            compute_weekly_pace_color(72.0, 20.0, 5, resets, now),
-            PaceColor::Yellow
-        );
+        assert_eq!(wpc(72.0, 20.0, 5, resets, now), PaceColor::Yellow);
         // remaining 5 (a quarter day's budget or less, "5% left") -> red.
-        assert_eq!(
-            compute_weekly_pace_color(75.0, 20.0, 5, resets, now),
-            PaceColor::Red
-        );
+        assert_eq!(wpc(75.0, 20.0, 5, resets, now), PaceColor::Red);
         // At/over the ceiling -> red.
-        assert_eq!(
-            compute_weekly_pace_color(80.0, 20.0, 5, resets, now),
-            PaceColor::Red
-        );
-        assert_eq!(
-            compute_weekly_pace_color(85.0, 20.0, 5, resets, now),
-            PaceColor::Red
-        );
+        assert_eq!(wpc(80.0, 20.0, 5, resets, now), PaceColor::Red);
+        assert_eq!(wpc(85.0, 20.0, 5, resets, now), PaceColor::Red);
     }
 
     #[test]
@@ -275,24 +278,38 @@ mod tests {
     }
 
     #[test]
-    fn weekday_counting_matches_legacy() {
+    fn weekday_counting() {
         // Mon after a Thu-reset cycle: Thu+Fri+Sat+Sun+Mon -> 3 weekdays.
         let now = utc(2024, 3, 11, 12, 0);
         let resets = utc(2024, 3, 14, 9, 0);
-        assert_eq!(days_into_cycle(resets, now, 5), 3);
+        assert_eq!(wde(resets, now, 5), 3);
     }
 
     #[test]
     fn weekend_uses_last_work_day_ceiling() {
         let now = utc(2024, 3, 10, 12, 0); // Sunday
         let resets = utc(2024, 3, 14, 9, 0);
-        assert_eq!(days_into_cycle(resets, now, 5), 2);
+        assert_eq!(wde(resets, now, 5), 2);
     }
 
     #[test]
     fn work_days_7_counts_all_calendar_days() {
         let now = utc(2024, 3, 11, 12, 0);
         let resets = utc(2024, 3, 14, 9, 0);
-        assert_eq!(days_into_cycle(resets, now, 7), 5);
+        assert_eq!(wde(resets, now, 7), 5);
+    }
+
+    /// The reported bug: work days are counted by *local* calendar date, not UTC. A reset at
+    /// 8pm CST lands on the next UTC date, so UTC counting was off by one.
+    #[test]
+    fn work_day_counts_in_local_calendar_not_utc() {
+        // Reset Mon Jun 15 2026 ~8pm CST (= Jun 16 02:00 UTC); cycle started Mon Jun 8 8pm CST.
+        let resets = utc(2026, 6, 16, 2, 0);
+        let now = utc(2026, 6, 12, 22, 0); // Fri Jun 12, 4pm CST
+        let cst = FixedOffset::west_opt(6 * 3600).unwrap();
+        // Local (CST): Mon, Tue, Wed, Thu, Fri = 5 work days.
+        assert_eq!(work_days_elapsed(resets, now, 5, &cst), 5);
+        // UTC counting gives the off-by-one the user saw.
+        assert_eq!(work_days_elapsed(resets, now, 5, &Utc), 4);
     }
 }
