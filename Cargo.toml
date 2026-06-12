@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/agent-usage-core",
+    "crates/agent-usage-providers",
+    "crates/agent-usage-cli",
+]
+
+# The COSMIC applet (added later) only builds on Linux/Wayland, so when it lands it
+# will be excluded from `default-members` the way the rest of the workspace stays
+# buildable on macOS. For now every member builds everywhere.
+default-members = [
+    "crates/agent-usage-core",
+    "crates/agent-usage-providers",
+    "crates/agent-usage-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/fuabioo/agent-usage-tray"
+
+# Shared dependency versions. Kept deliberately small: the core is pure logic, the
+# providers add only a tiny blocking HTTP client, and the CLI adds only arg parsing.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+thiserror = "2"
+ureq = "2"
+clap = { version = "4", features = ["derive"] }

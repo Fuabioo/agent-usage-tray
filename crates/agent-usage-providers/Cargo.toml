@@ -1,0 +1,14 @@
+[package]
+name = "agent-usage-providers"
+description = "Concrete agent usage providers (Claude, Codex, ...) implementing agent-usage-core's Provider trait."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent-usage-core = { path = "../agent-usage-core" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+ureq.workspace = true

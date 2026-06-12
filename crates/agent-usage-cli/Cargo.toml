@@ -1,0 +1,19 @@
+[package]
+name = "agent-usage-cli"
+description = "agent-usage: one CLI, one output contract, for every coding agent's usage budget."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "agent-usage"
+path = "src/main.rs"
+
+[dependencies]
+agent-usage-core = { path = "../agent-usage-core" }
+agent-usage-providers = { path = "../agent-usage-providers" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+clap.workspace = true

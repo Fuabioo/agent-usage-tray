@@ -1,0 +1,13 @@
+[package]
+name = "agent-usage-core"
+description = "Agent-agnostic usage model: provider trait, normalized windows/credit-pool schema, pace and projection math. No GUI or network deps."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
