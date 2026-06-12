@@ -26,6 +26,7 @@ use std::time::SystemTime;
 use agent_usage_core::{
     AgentInfo, FetchOptions, Provider, Usage, UsageError, Window, WindowKind,
 };
+use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 
 use crate::creds;
@@ -110,13 +111,16 @@ impl Provider for Codex {
             )
         })?;
 
+        // The rollout is a point-in-time snapshot from Codex's last run, so correct for windows
+        // that have rolled over since (see `window_from`).
+        let now = Utc::now();
         let mut windows = Vec::new();
         // primary = rolling short window (5h); secondary = weekly window.
         if let Some(w) = snapshot.rate_limits.primary {
-            windows.push(window_from(WindowKind::Session, primary_label(&w), &w));
+            windows.push(window_from(WindowKind::Session, primary_label(&w), &w, now));
         }
         if let Some(w) = snapshot.rate_limits.secondary {
-            windows.push(window_from(WindowKind::Weekly, "weekly".to_string(), &w));
+            windows.push(window_from(WindowKind::Weekly, "weekly".to_string(), &w, now));
         }
 
         if windows.is_empty() {
@@ -152,11 +156,28 @@ impl Codex {
     }
 }
 
-fn window_from(kind: WindowKind, label: String, w: &RlWindow) -> Window {
-    let resets_at = w
+fn window_from(kind: WindowKind, label: String, w: &RlWindow, now: DateTime<Utc>) -> Window {
+    let mut used = w.used_percent;
+    let mut resets_at = w
         .resets_at
-        .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0));
-    Window::utilization(kind, label, w.used_percent, resets_at)
+        .and_then(|secs| DateTime::from_timestamp(secs, 0));
+
+    // If the recorded window has already reset, the snapshot is stale: the window rolled over to
+    // 0%, and since this is the newest rollout (Codex's last activity) nothing has been spent
+    // since. Report 0% used and advance the reset to the next cycle so the countdown stays sane.
+    if let Some(reset) = resets_at {
+        if reset <= now {
+            used = 0.0;
+            if let Some(mins) = w.window_minutes.filter(|m| *m > 0) {
+                let win = mins * 60;
+                let elapsed = (now - reset).num_seconds();
+                let cycles = elapsed / win + 1; // strictly past `now`
+                resets_at = Some(reset + Duration::seconds(cycles * win));
+            }
+        }
+    }
+
+    Window::utilization(kind, label, used, resets_at)
 }
 
 /// Human label for the short window from its length: 300 min -> "5h limit".
@@ -283,7 +304,8 @@ mod tests {
         let mut f = File::create(day.join("rollout-2026-06-11T12-00-00-abc.jsonl")).unwrap();
         // A noise line, then the real token_count event.
         writeln!(f, r#"{{"timestamp":"2026-06-11T12:00:00Z","type":"event_msg","payload":{{"type":"agent_message","message":"hi"}}}}"#).unwrap();
-        writeln!(f, r#"{{"timestamp":"2026-06-11T12:30:00Z","type":"event_msg","payload":{{"type":"token_count","info":{{}},"rate_limits":{{"primary":{{"used_percent":58.0,"window_minutes":300,"resets_at":1781216909}},"secondary":{{"used_percent":9.0,"window_minutes":10080,"resets_at":1781803709}},"credits":null,"plan_type":"team"}}}}}}"#).unwrap();
+        // Far-future reset times so the windows are never treated as stale by this test.
+        writeln!(f, r#"{{"timestamp":"2026-06-11T12:30:00Z","type":"event_msg","payload":{{"type":"token_count","info":{{}},"rate_limits":{{"primary":{{"used_percent":58.0,"window_minutes":300,"resets_at":4102444800}},"secondary":{{"used_percent":9.0,"window_minutes":10080,"resets_at":4102444800}},"credits":null,"plan_type":"team"}}}}}}"#).unwrap();
 
         let opts = FetchOptions {
             creds_path: Some(dir.clone()),
@@ -303,6 +325,36 @@ mod tests {
         assert_eq!(weekly.used_pct(), 9.0);
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stale_window_reads_as_reset() {
+        // A 5h window whose reset is long past: the snapshot has rolled over.
+        let now = DateTime::from_timestamp(1_781_300_000, 0).unwrap(); // 2026
+        let w = RlWindow {
+            used_percent: 58.0,
+            window_minutes: Some(300),
+            resets_at: Some(1_000_000_000), // 2001, way in the past
+        };
+        let win = window_from(WindowKind::Session, "5h limit".to_string(), &w, now);
+        assert_eq!(win.used_pct(), 0.0, "past-reset window reads as reset");
+        let next = win.resets_at.expect("reset advanced");
+        assert!(next > now, "reset advanced into the future");
+        // And it lands on a 5-hour cycle boundary from the original reset.
+        let orig = DateTime::from_timestamp(1_000_000_000, 0).unwrap();
+        assert_eq!((next - orig).num_seconds() % (300 * 60), 0);
+    }
+
+    #[test]
+    fn fresh_window_is_kept_as_is() {
+        let now = DateTime::from_timestamp(1_781_300_000, 0).unwrap();
+        let w = RlWindow {
+            used_percent: 42.0,
+            window_minutes: Some(300),
+            resets_at: Some(1_781_400_000), // future
+        };
+        let win = window_from(WindowKind::Session, "5h limit".to_string(), &w, now);
+        assert_eq!(win.used_pct(), 42.0, "future-reset window kept as recorded");
     }
 
     #[test]
