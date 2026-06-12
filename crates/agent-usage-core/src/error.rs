@@ -36,6 +36,11 @@ pub enum UsageError {
     /// usage source that has not been wired up). Carries a human-readable reason.
     #[error("{0}")]
     Unsupported(String),
+
+    /// The source was found and read, but contains no usage data yet (e.g. an agent that
+    /// records usage only after its first run). Distinct from a credentials failure.
+    #[error("{0}")]
+    NoData(String),
 }
 
 impl UsageError {
@@ -51,6 +56,7 @@ impl UsageError {
             UsageError::CredentialsParse(_) => "credentials_parse",
             UsageError::CredentialsMissingToken => "credentials_missing_token",
             UsageError::Unsupported(_) => "unsupported",
+            UsageError::NoData(_) => "no_data",
         }
     }
 }

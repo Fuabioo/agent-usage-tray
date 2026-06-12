@@ -12,7 +12,7 @@ dashboard ideas, generalized so that adding an agent is a small, isolated change
 
 | Priority | Component                         | State                                            |
 | -------- | --------------------------------- | ------------------------------------------------ |
-| 1        | **`agent-usage` CLI**             | ✅ working — Claude (live), Codex (stub), `all`   |
+| 1        | **`agent-usage` CLI**             | ✅ working — Claude (live), Codex (live), `all`   |
 | 2        | **macOS menu bar app**            | ✅ working — multi-agent bar + dashboard + settings |
 | 3        | Linux COSMIC panel applet         | ⏳ planned (Rust/libcosmic, links the core)       |
 
@@ -35,7 +35,8 @@ crates/
                            - projection (burn-rate → depletion date, "out before reset?")
   agent-usage-providers/   Concrete providers + a registry:
                            - claude  (real — Anthropic OAuth usage API; file + macOS Keychain)
-                           - codex   (stub — surface wired, source not implemented yet)
+                           - codex   (real — reads the freshest rate_limits event from the
+                             newest ~/.codex/sessions rollout log; no network, no token)
                            - shared creds + tiny blocking HTTP helper (ureq)
   agent-usage-cli/         `agent-usage` binary: per-agent subcommands, one JSON/`--status`
                            contract for every agent.
