@@ -36,12 +36,15 @@ impl PaceColor {
 ///
 /// Colors by **today's headroom**, not the cumulative ratio. The ceiling is
 /// `work_day_index * daily_budget`; `remaining = ceiling - utilization` is how much you can
-/// still spend today and stay on pace. As long as you have more than a quarter of a day's
-/// budget left you're Green; within that sliver of the ceiling is Yellow; over is Red.
+/// still spend today and stay on pace. Thresholds are fractions of a day's budget so they scale
+/// with `daily_budget` (for the default 20%/day this is red ≤ 5%, yellow 5–10%, green > 10%):
 ///
-/// This matters late in the week: being a full day under pace (e.g. day 4 with 60% used and an
-/// 80% ceiling — a whole day's budget still available) reads Green, where a `used / ceiling`
-/// ratio would wrongly tip to Yellow at exactly 0.75.
+/// - **Green**  — more than half a day's budget of headroom left.
+/// - **Yellow** — between a quarter and half a day's budget left (getting low).
+/// - **Red**    — a quarter day's budget or less left, or already over.
+///
+/// Colors by headroom (not a `used / ceiling` ratio) so that being a full day under pace late
+/// in the week reads Green rather than wrongly warning at exactly 0.75.
 pub fn compute_weekly_pace_color(
     utilization: f64,
     daily_budget: f64,
@@ -57,9 +60,9 @@ pub fn compute_weekly_pace_color(
     let ceiling = work_day_index as f64 * daily_budget;
     let remaining = ceiling - utilization;
 
-    if remaining > 0.25 * daily_budget {
+    if remaining > 0.5 * daily_budget {
         PaceColor::Green
-    } else if remaining > 0.0 {
+    } else if remaining > 0.25 * daily_budget {
         PaceColor::Yellow
     } else {
         PaceColor::Red
@@ -191,21 +194,26 @@ mod tests {
             PaceColor::Green,
             "a full day under pace must be green, not a warning"
         );
-        // Still green with most of today's budget left (remaining 6 > 0.25*20).
+        // Still green with more than half a day's budget left (remaining 15 > 0.5*20).
         assert_eq!(
-            compute_weekly_pace_color(74.0, 20.0, 5, resets, now),
+            compute_weekly_pace_color(65.0, 20.0, 5, resets, now),
             PaceColor::Green
         );
     }
 
     #[test]
-    fn day4_near_the_ceiling_is_yellow_then_red() {
+    fn day4_color_bands() {
         let now = utc(2024, 3, 12, 12, 0); // work day 4, ceiling 80
         let resets = utc(2024, 3, 14, 9, 0);
-        // Within a quarter day of the ceiling (remaining 5 <= 0.25*20) -> yellow.
+        // remaining 8 (between a quarter and half a day) -> yellow.
+        assert_eq!(
+            compute_weekly_pace_color(72.0, 20.0, 5, resets, now),
+            PaceColor::Yellow
+        );
+        // remaining 5 (a quarter day's budget or less, "5% left") -> red.
         assert_eq!(
             compute_weekly_pace_color(75.0, 20.0, 5, resets, now),
-            PaceColor::Yellow
+            PaceColor::Red
         );
         // At/over the ceiling -> red.
         assert_eq!(
