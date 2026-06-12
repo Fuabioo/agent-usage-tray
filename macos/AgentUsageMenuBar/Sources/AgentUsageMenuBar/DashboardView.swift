@@ -120,6 +120,7 @@ private struct AgentRingView: View {
         var caption: String
         var nsColor: NSColor
         var isError: Bool
+        var isSurplus: Bool = false
     }
 
     private var model: Model {
@@ -130,11 +131,12 @@ private struct AgentRingView: View {
         if let pace = snapshot.pace {
             let daily = max(snapshot.config.dailyBudget, 0.0001)
             let frac = min(max(pace.remaining / daily, 0), 1)
-            let nsColor = snapshot.window("weekly")?.pace.nsColor ?? PaceColor.green.nsColor
+            let weeklyPace = snapshot.window("weekly")?.pace ?? .green
             let caption = pace.remaining >= 0
                 ? "\(Int(pace.remaining.rounded()))% left"
                 : "\(Int((-pace.remaining).rounded()))% over"
-            return Model(fraction: frac, caption: caption, nsColor: nsColor, isError: false)
+            return Model(fraction: frac, caption: caption, nsColor: weeklyPace.nsColor,
+                         isError: false, isSurplus: weeklyPace == .surplus)
         }
         // Pool / fallback agents without a weekly pace window.
         if let p = snapshot.primaryWindow {
@@ -160,6 +162,9 @@ private struct AgentRingView: View {
                     .stroke(m.isError ? Color.secondary.opacity(0.4) : color,
                             style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
+                    // Golden glow when you're a full day or more ahead of pace (surplus).
+                    .shadow(color: m.isSurplus ? color.opacity(0.9) : .clear, radius: 5)
+                    .shadow(color: m.isSurplus ? color.opacity(0.6) : .clear, radius: 9)
                 AgentGlyphView(agentID: snapshot.agent.id,
                                nsColor: m.isError ? .secondaryLabelColor : m.nsColor,
                                size: 24)

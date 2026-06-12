@@ -118,10 +118,11 @@ them, even though no built-in provider uses it yet):
 
 - **Weekly** window: pace-based on **today's headroom**. Ceiling = `work_day_index *
   daily_budget`; `remaining = ceiling - used`. Bands scale with `daily_budget` (for the default
-  20%/day: **green > 10% left, yellow 5–10%, red ≤ 5% or over**) — i.e. green above half a day's
-  budget of headroom, yellow down to a quarter day, red at a quarter day or less. So being a
-  full day under pace late in the week reads green, not "approaching the ceiling". Only Mon–Fri
-  count when `work_days ≤ 5`.
+  20%/day: **surplus ≥ 40% left, green > 10%, yellow 5–10%, red ≤ 5% or over**) — surplus when
+  you're a full day or more ahead of pace (banked budget; rendered gold with a glow), green
+  above half a day's headroom, yellow down to a quarter day, red at a quarter day or less. So
+  being a full day under pace late in the week reads green (or surplus), not "approaching the
+  ceiling". Only Mon–Fri count when `work_days ≤ 5`.
 - **Session** window: fixed thresholds (`≤50` green, `≤80` yellow, else red).
 - **Credit pool**: red if projected to deplete before reset (or `≥90%` used), yellow at `≥75%`,
   else green.

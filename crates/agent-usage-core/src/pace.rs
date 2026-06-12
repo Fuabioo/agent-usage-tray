@@ -13,9 +13,11 @@ use chrono::{DateTime, Datelike, Utc, Weekday};
 
 const CYCLE_LENGTH: i64 = 7;
 
-/// Pace-based color indicator. Green = on track, Yellow = approaching the line, Red = over.
+/// Pace-based color indicator. Surplus = a full day or more ahead (banked budget), Green = on
+/// track, Yellow = approaching the line, Red = over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaceColor {
+    Surplus,
     Green,
     Yellow,
     Red,
@@ -25,6 +27,7 @@ impl PaceColor {
     /// Lowercase tag for the JSON contract.
     pub fn tag(self) -> &'static str {
         match self {
+            PaceColor::Surplus => "surplus",
             PaceColor::Green => "green",
             PaceColor::Yellow => "yellow",
             PaceColor::Red => "red",
@@ -37,11 +40,13 @@ impl PaceColor {
 /// Colors by **today's headroom**, not the cumulative ratio. The ceiling is
 /// `work_day_index * daily_budget`; `remaining = ceiling - utilization` is how much you can
 /// still spend today and stay on pace. Thresholds are fractions of a day's budget so they scale
-/// with `daily_budget` (for the default 20%/day this is red ≤ 5%, yellow 5–10%, green > 10%):
+/// with `daily_budget` (for the default 20%/day: surplus ≥ 40%, green > 10%, yellow 5–10%,
+/// red ≤ 5%):
 ///
-/// - **Green**  — more than half a day's budget of headroom left.
-/// - **Yellow** — between a quarter and half a day's budget left (getting low).
-/// - **Red**    — a quarter day's budget or less left, or already over.
+/// - **Surplus** — a full day's budget or more ahead of pace (≥ 2 days of headroom banked).
+/// - **Green**   — more than half a day's budget of headroom left.
+/// - **Yellow**  — between a quarter and half a day's budget left (getting low).
+/// - **Red**     — a quarter day's budget or less left, or already over.
 ///
 /// Colors by headroom (not a `used / ceiling` ratio) so that being a full day under pace late
 /// in the week reads Green rather than wrongly warning at exactly 0.75.
@@ -60,7 +65,9 @@ pub fn compute_weekly_pace_color(
     let ceiling = work_day_index as f64 * daily_budget;
     let remaining = ceiling - utilization;
 
-    if remaining > 0.5 * daily_budget {
+    if remaining >= 2.0 * daily_budget {
+        PaceColor::Surplus // a full day or more ahead of pace — banked budget
+    } else if remaining > 0.5 * daily_budget {
         PaceColor::Green
     } else if remaining > 0.25 * daily_budget {
         PaceColor::Yellow
@@ -197,6 +204,27 @@ mod tests {
         // Still green with more than half a day's budget left (remaining 15 > 0.5*20).
         assert_eq!(
             compute_weekly_pace_color(65.0, 20.0, 5, resets, now),
+            PaceColor::Green
+        );
+    }
+
+    #[test]
+    fn way_under_pace_is_surplus() {
+        let now = utc(2024, 3, 12, 12, 0); // work day 4, ceiling 80
+        let resets = utc(2024, 3, 14, 9, 0);
+        // 5% used at day 4 -> remaining 75 (≥ 2 days banked) -> surplus.
+        assert_eq!(
+            compute_weekly_pace_color(5.0, 20.0, 5, resets, now),
+            PaceColor::Surplus
+        );
+        // Exactly one full day ahead (remaining 40 = 2*daily) -> surplus.
+        assert_eq!(
+            compute_weekly_pace_color(40.0, 20.0, 5, resets, now),
+            PaceColor::Surplus
+        );
+        // Just under one day ahead (remaining 39) -> green, not surplus.
+        assert_eq!(
+            compute_weekly_pace_color(41.0, 20.0, 5, resets, now),
             PaceColor::Green
         );
     }

@@ -8,19 +8,26 @@ import SwiftUI
 /// especially): each pace resolves to a darker, saturated variant in Light mode and a brighter
 /// one in Dark mode, so text stays legible whether the app follows Light, Dark, or Auto.
 enum PaceColor: String, Codable {
-    case green, yellow, red
+    case surplus, green, yellow, red
 
     /// Higher = more severe; used to pick an agent's "worst" pace for the menu bar glyph.
     var severity: Int {
         switch self {
-        case .green: return 0
-        case .yellow: return 1
-        case .red: return 2
+        case .surplus: return 0
+        case .green: return 1
+        case .yellow: return 2
+        case .red: return 3
         }
     }
 
+    /// Whether this pace warrants attention (drives the "only yellow/red" menu bar mode).
+    var needsAttention: Bool { self == .yellow || self == .red }
+
     var nsColor: NSColor {
         switch self {
+        case .surplus:
+            // A warm gold, distinct from the warning amber (higher green channel = golden, not orange).
+            return .paceAdaptive(light: (0.659, 0.498, 0.035), dark: (1.0, 0.835, 0.310))
         case .green:
             return .paceAdaptive(light: (0.082, 0.502, 0.239), dark: (0.290, 0.871, 0.502))
         case .yellow:

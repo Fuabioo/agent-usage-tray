@@ -184,7 +184,7 @@ final class StatusItemController {
             Self.appendPerAgent(out, agents: agents, font: font, both: true)
 
         case .onlyAttention:
-            let attention = agents.filter { !$0.isError && $0.worstPace.severity >= 1 }
+            let attention = agents.filter { !$0.isError && $0.worstPace.needsAttention }
             if attention.isEmpty {
                 // Everything's on track — show the color-coded glyphs so the bar isn't blank.
                 for (i, agent) in agents.enumerated() {
