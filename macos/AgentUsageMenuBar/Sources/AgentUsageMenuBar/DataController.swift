@@ -31,8 +31,12 @@ final class DataController: ObservableObject {
     init(settings: AppSettings) {
         self.settings = settings
         // Re-fetch when the work-days budget changes so coloring updates immediately.
+        // `receive(on:)` defers the refresh to the next runloop tick so it doesn't re-enter the
+        // @Published property's getter while it's still publishing the change (a reentrant read
+        // there crashes — EXC_BAD_ACCESS in swift_dynamicCast).
         settings.$workDays
             .dropFirst()
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
     }

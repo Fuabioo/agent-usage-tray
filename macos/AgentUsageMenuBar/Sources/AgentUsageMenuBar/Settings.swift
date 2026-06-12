@@ -56,11 +56,11 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    // Range is enforced by the Stepper (1...7) and clamped on load; we deliberately do NOT
+    // reassign `workDays` inside its own didSet (that republishes mid-update and, combined with a
+    // synchronous subscriber, crashes).
     @Published var workDays: Int {
-        didSet {
-            workDays = min(max(workDays, 1), 7)
-            defaults.set(workDays, forKey: Keys.workDays)
-        }
+        didSet { defaults.set(workDays, forKey: Keys.workDays) }
     }
 
     @Published var appearance: Appearance {
