@@ -34,8 +34,14 @@ impl PaceColor {
 
 /// Computes the pace color for a multi-day budget (weekly) window.
 ///
-/// Given the current work-day index within the cycle, the ceiling is `index * daily_budget`.
-/// `ratio = utilization / ceiling`; `< 0.75` Green, `< 1.0` Yellow, else Red.
+/// Colors by **today's headroom**, not the cumulative ratio. The ceiling is
+/// `work_day_index * daily_budget`; `remaining = ceiling - utilization` is how much you can
+/// still spend today and stay on pace. As long as you have more than a quarter of a day's
+/// budget left you're Green; within that sliver of the ceiling is Yellow; over is Red.
+///
+/// This matters late in the week: being a full day under pace (e.g. day 4 with 60% used and an
+/// 80% ceiling — a whole day's budget still available) reads Green, where a `used / ceiling`
+/// ratio would wrongly tip to Yellow at exactly 0.75.
 pub fn compute_weekly_pace_color(
     utilization: f64,
     daily_budget: f64,
@@ -43,17 +49,17 @@ pub fn compute_weekly_pace_color(
     resets_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> PaceColor {
-    let work_day_index = days_into_cycle(resets_at, now, work_days);
-    let ceiling = work_day_index as f64 * daily_budget;
-
-    if ceiling <= 0.0 {
-        return PaceColor::Red; // defensive: avoid division by zero
+    if daily_budget <= 0.0 {
+        return PaceColor::Red; // defensive
     }
 
-    let ratio = utilization / ceiling;
-    if ratio < 0.75 {
+    let work_day_index = days_into_cycle(resets_at, now, work_days);
+    let ceiling = work_day_index as f64 * daily_budget;
+    let remaining = ceiling - utilization;
+
+    if remaining > 0.25 * daily_budget {
         PaceColor::Green
-    } else if ratio < 1.00 {
+    } else if remaining > 0.0 {
         PaceColor::Yellow
     } else {
         PaceColor::Red
@@ -169,6 +175,45 @@ mod tests {
         let resets = utc(2024, 3, 14, 9, 0);
         assert_eq!(
             compute_weekly_pace_color(10.0, 0.0, 5, resets, now),
+            PaceColor::Red
+        );
+    }
+
+    // Cycle: resets Thu Mar 14 09:00, started Thu Mar 7. Tue Mar 12 = work day 4 (Thu, Fri,
+    // Mon, Tue), so ceiling = 4 * 20 = 80.
+    #[test]
+    fn day4_a_full_day_under_pace_is_green() {
+        let now = utc(2024, 3, 12, 12, 0); // work day 4
+        let resets = utc(2024, 3, 14, 9, 0);
+        // 60% used = exactly day-3's ceiling; a whole day's budget (20%) still available.
+        assert_eq!(
+            compute_weekly_pace_color(60.0, 20.0, 5, resets, now),
+            PaceColor::Green,
+            "a full day under pace must be green, not a warning"
+        );
+        // Still green with most of today's budget left (remaining 6 > 0.25*20).
+        assert_eq!(
+            compute_weekly_pace_color(74.0, 20.0, 5, resets, now),
+            PaceColor::Green
+        );
+    }
+
+    #[test]
+    fn day4_near_the_ceiling_is_yellow_then_red() {
+        let now = utc(2024, 3, 12, 12, 0); // work day 4, ceiling 80
+        let resets = utc(2024, 3, 14, 9, 0);
+        // Within a quarter day of the ceiling (remaining 5 <= 0.25*20) -> yellow.
+        assert_eq!(
+            compute_weekly_pace_color(75.0, 20.0, 5, resets, now),
+            PaceColor::Yellow
+        );
+        // At/over the ceiling -> red.
+        assert_eq!(
+            compute_weekly_pace_color(80.0, 20.0, 5, resets, now),
+            PaceColor::Red
+        );
+        assert_eq!(
+            compute_weekly_pace_color(85.0, 20.0, 5, resets, now),
             PaceColor::Red
         );
     }

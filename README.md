@@ -108,8 +108,11 @@ them, even though no built-in provider uses it yet):
 
 ### Pace coloring
 
-- **Weekly** window: pace-based. Ceiling = `work_day_index * daily_budget`; `ratio < 0.75`
-  green, `< 1.0` yellow, else red. Only Mon–Fri count when `work_days ≤ 5`.
+- **Weekly** window: pace-based on **today's headroom**. Ceiling = `work_day_index *
+  daily_budget`; `remaining = ceiling - used`. Green while you still have more than a quarter
+  of a day's budget left, yellow within that sliver of the ceiling, red once over. (So being a
+  full day under pace late in the week reads green, not "approaching the ceiling".) Only Mon–Fri
+  count when `work_days ≤ 5`.
 - **Session** window: fixed thresholds (`≤50` green, `≤80` yellow, else red).
 - **Credit pool**: red if projected to deplete before reset (or `≥90%` used), yellow at `≥75%`,
   else green.
