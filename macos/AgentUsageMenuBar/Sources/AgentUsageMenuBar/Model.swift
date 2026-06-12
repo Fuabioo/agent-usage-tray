@@ -70,12 +70,6 @@ struct AgentSnapshot: Codable, Identifiable {
         window("weekly") ?? window("credits") ?? window("session") ?? windows?.first
     }
 
-    /// The secondary window shown in the detail rows (the one that isn't primary).
-    var secondaryWindow: WindowDTO? {
-        guard let primary = primaryWindow else { return nil }
-        return windows?.first { $0.label != primary.label }
-    }
-
     /// Most severe pace across all windows (drives the menu bar glyph tint).
     var worstPace: PaceColor {
         (windows ?? []).map(\.pace).max(by: { $0.severity < $1.severity }) ?? .green

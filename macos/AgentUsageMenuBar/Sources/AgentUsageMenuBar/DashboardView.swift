@@ -74,10 +74,8 @@ struct DashboardView: View {
     }
 
     private var detailRows: some View {
-        let columns = [GridItem(.flexible(), alignment: .leading),
-                       GridItem(.flexible(), alignment: .leading)]
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-            ForEach(displayAgents) { DetailRow(snapshot: $0) }
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(displayAgents) { AgentDetail(snapshot: $0) }
         }
     }
 
@@ -108,46 +106,63 @@ struct DashboardView: View {
 private struct AgentRingView: View {
     let snapshot: AgentSnapshot
 
-    private var primary: WindowDTO? { snapshot.primaryWindow }
-
-    /// Fraction of the ring to fill = remaining budget (so a full ring means "lots left").
-    private var fraction: Double {
-        guard let p = primary else { return 0 }
-        return min(max(p.remainingPct / 100.0, 0), 1)
+    /// What the ring reports: today's pace headroom (`ceiling − used`), gauged against one
+    /// day's budget. A full ring means "a whole day's allowance still available"; empty/over
+    /// means you've spent through today's pace.
+    private struct Model {
+        var fraction: Double
+        var caption: String
+        var nsColor: NSColor
+        var isError: Bool
     }
 
-    private var color: Color { primary?.pace.swiftUIColor ?? Color.secondary }
-    private var nsColor: NSColor { primary?.pace.nsColor ?? .secondaryLabelColor }
-
-    /// Headline under the ring: "out ~Thu" for a depleting pool, else "N% left", else "error".
-    private var caption: String {
-        if snapshot.isError { return "error" }
-        if let pool = primary?.pool, pool.depletesBeforeReset, let dep = pool.projectedDepletion {
-            return "out ~\(shortWeekday(dep))"
+    private var model: Model {
+        if snapshot.isError {
+            return Model(fraction: 1, caption: "error", nsColor: .secondaryLabelColor, isError: true)
         }
-        if let p = primary { return "\(Int(p.remainingPct.rounded()))% left" }
-        return "—"
+        // Today's pace: how much of today's daily budget is still available.
+        if let pace = snapshot.pace {
+            let daily = max(snapshot.config.dailyBudget, 0.0001)
+            let frac = min(max(pace.remaining / daily, 0), 1)
+            let nsColor = snapshot.window("weekly")?.pace.nsColor ?? PaceColor.green.nsColor
+            let caption = pace.remaining >= 0
+                ? "\(Int(pace.remaining.rounded()))% left"
+                : "\(Int((-pace.remaining).rounded()))% over"
+            return Model(fraction: frac, caption: caption, nsColor: nsColor, isError: false)
+        }
+        // Pool / fallback agents without a weekly pace window.
+        if let p = snapshot.primaryWindow {
+            if let pool = p.pool, pool.depletesBeforeReset, let dep = pool.projectedDepletion {
+                return Model(fraction: min(max(p.remainingPct / 100, 0), 1),
+                             caption: "out ~\(shortWeekday(dep))", nsColor: p.pace.nsColor, isError: false)
+            }
+            return Model(fraction: min(max(p.remainingPct / 100, 0), 1),
+                         caption: "\(Int(p.remainingPct.rounded()))% left", nsColor: p.pace.nsColor, isError: false)
+        }
+        return Model(fraction: 0, caption: "—", nsColor: .secondaryLabelColor, isError: false)
     }
 
     var body: some View {
+        let m = model
+        let color = Color(nsColor: m.nsColor)
         VStack(spacing: 6) {
             ZStack {
                 Circle()
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 5)
                 Circle()
-                    .trim(from: 0, to: snapshot.isError ? 1 : fraction)
-                    .stroke(snapshot.isError ? Color.secondary.opacity(0.4) : color,
+                    .trim(from: 0, to: m.isError ? 1 : m.fraction)
+                    .stroke(m.isError ? Color.secondary.opacity(0.4) : color,
                             style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 AgentGlyphView(agentID: snapshot.agent.id,
-                               nsColor: snapshot.isError ? .secondaryLabelColor : nsColor,
+                               nsColor: m.isError ? .secondaryLabelColor : m.nsColor,
                                size: 24)
             }
             .frame(width: 52, height: 52)
 
-            Text(caption)
+            Text(m.caption)
                 .font(.caption).bold()
-                .foregroundStyle(snapshot.isError ? Color.secondary : color)
+                .foregroundStyle(m.isError ? Color.secondary : color)
                 .lineLimit(1)
             Text(snapshot.agent.label)
                 .font(.caption2)
@@ -158,26 +173,40 @@ private struct AgentRingView: View {
     }
 }
 
-// MARK: - Detail row
+// MARK: - Per-agent detail
 
-private struct DetailRow: View {
+/// Each agent's windows shown as remaining ("left") percentages — the headline rings answer
+/// "how much can I still use today"; these rows answer "how much of each window is left".
+private struct AgentDetail: View {
     let snapshot: AgentSnapshot
 
-    /// Show the secondary window (the one the ring doesn't), else the primary.
-    private var window: WindowDTO? { snapshot.secondaryWindow ?? snapshot.primaryWindow }
+    /// Session first, then weekly, then anything else — a stable reading order across agents.
+    private var orderedWindows: [WindowDTO] {
+        let ws = snapshot.windows ?? []
+        return ws.filter { $0.kind == "session" }
+            + ws.filter { $0.kind == "weekly" }
+            + ws.filter { $0.kind != "session" && $0.kind != "weekly" }
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Text(snapshot.agent.label).foregroundStyle(.primary)
-            if let w = window, !snapshot.isError {
-                Text("· \(w.label)").foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                Text("\(Int(w.usedPct.rounded()))%")
-                    .bold()
-                    .foregroundStyle(w.pace.swiftUIColor)
+        HStack(alignment: .top, spacing: 10) {
+            Text(snapshot.agent.label)
+                .frame(width: 96, alignment: .leading)
+            if snapshot.isError || orderedWindows.isEmpty {
+                Text("error").foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             } else {
-                Text("· error").foregroundStyle(.secondary)
-                Spacer(minLength: 4)
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(orderedWindows, id: \.label) { w in
+                        HStack(spacing: 8) {
+                            Text("\(w.label) left").foregroundStyle(.secondary)
+                            Spacer(minLength: 12)
+                            Text("\(Int(w.remainingPct.rounded()))%")
+                                .bold()
+                                .foregroundStyle(w.pace.swiftUIColor)
+                        }
+                    }
+                }
             }
         }
         .font(.callout)

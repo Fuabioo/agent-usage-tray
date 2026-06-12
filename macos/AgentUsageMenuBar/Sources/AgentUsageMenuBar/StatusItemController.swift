@@ -169,7 +169,7 @@ final class StatusItemController {
             }
 
             let weekly = agent.window("weekly")
-            let session = agent.window("session") ?? agent.secondaryWindow
+            let session = agent.window("session")
             if let w = weekly, let s = session {
                 out.append(segment(intPct(w.usedPct), color: w.pace.nsColor, font: font))
                 out.append(segment(" · ", color: sep, font: font))
