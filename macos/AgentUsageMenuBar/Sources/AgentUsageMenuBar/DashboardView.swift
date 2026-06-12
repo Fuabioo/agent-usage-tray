@@ -138,9 +138,9 @@ private struct AgentRingView: View {
                     .stroke(snapshot.isError ? Color.secondary.opacity(0.4) : color,
                             style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                Image(systemName: AgentGlyph.symbol(forID: snapshot.agent.id))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(snapshot.isError ? Color.secondary : color)
+                AgentGlyphView(agentID: snapshot.agent.id,
+                               color: snapshot.isError ? Color.secondary : color,
+                               size: 18)
             }
             .frame(width: 52, height: 52)
 

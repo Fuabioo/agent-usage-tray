@@ -155,10 +155,11 @@ final class StatusItemController {
         for (i, agent) in agents.enumerated() {
             if i > 0 { out.append(segment("  ", color: sep, font: font)) }
 
-            if let symbol = tintedSymbol(AgentGlyph.symbol(forID: agent.agent.id),
-                                         color: agent.isError ? sep : agent.worstPace.nsColor,
-                                         font: font) {
-                out.append(symbol)
+            if let glyph = AgentAssets.tintedGlyph(
+                forID: agent.agent.id,
+                color: agent.isError ? sep : agent.worstPace.nsColor,
+                size: font.pointSize + 1) {
+                out.append(attachment(glyph, font: font))
                 out.append(segment(" ", color: sep, font: font))
             }
 
@@ -196,23 +197,12 @@ final class StatusItemController {
         NSAttributedString(string: s, attributes: [.foregroundColor: color, .font: font])
     }
 
-    /// An SF Symbol recolored to `color`, wrapped as a baseline-aligned text attachment.
-    private static func tintedSymbol(_ name: String, color: NSColor, font: NSFont) -> NSAttributedString? {
-        let cfg = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .medium)
-        guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(cfg) else { return nil }
-
-        let size = base.size
-        let tinted = NSImage(size: size, flipped: false) { rect in
-            base.draw(in: rect)
-            color.set()
-            rect.fill(using: .sourceAtop)
-            return true
-        }
-        tinted.isTemplate = false
-
+    /// Wrap an already-tinted glyph image as a baseline-aligned text attachment so it sits
+    /// inline with the percentage text in the menu bar.
+    private static func attachment(_ image: NSImage, font: NSFont) -> NSAttributedString {
+        let size = image.size
         let attachment = NSTextAttachment()
-        attachment.image = tinted
+        attachment.image = image
         // Center the glyph on the text's cap height for a tidy baseline.
         let y = (font.capHeight - size.height) / 2
         attachment.bounds = CGRect(x: 0, y: y, width: size.width, height: size.height)

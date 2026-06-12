@@ -37,6 +37,17 @@ cp "$APP_BIN" "$APP/Contents/MacOS/AgentUsageMenuBar"
 cp "$CLI" "$APP/Contents/Resources/agent-usage"
 cp "$PKG/Resources/Info.plist" "$APP/Contents/Info.plist"
 
+# Bundle per-agent logos. These are committed transparent-black template PNGs (regenerate from
+# the SVGs with macos/render-logos.sh when a logo changes). The app loads <agent-id>.png from
+# Resources and tints it per pace.
+AGENTS_DIR="$PKG/Resources/agents"
+if [ -d "$AGENTS_DIR" ]; then
+  for png in "$AGENTS_DIR"/*.png; do
+    [ -e "$png" ] || continue
+    cp "$png" "$APP/Contents/Resources/$(basename "$png")"
+  done
+fi
+
 echo "==> Ad-hoc signing"
 codesign --force --deep --sign - "$APP"
 

@@ -151,21 +151,6 @@ extension JSONDecoder {
     }
 }
 
-// MARK: - Per-agent presentation
-
-enum AgentGlyph {
-    /// An SF Symbol name per agent, used for the menu bar glyph and dashboard rings.
-    static func symbol(forID id: String) -> String {
-        switch id {
-        case "claude": return "sparkle"
-        case "codex": return "chevron.left.forwardslash.chevron.right"
-        case "antigravity": return "a.circle"
-        case "hyper": return "bolt.fill"
-        default: return "cpu"
-        }
-    }
-}
-
 // MARK: - Duration / projection formatting
 
 /// Format seconds as "3d 12h" / "2h 45m" / "45m" (minimum "1m").
