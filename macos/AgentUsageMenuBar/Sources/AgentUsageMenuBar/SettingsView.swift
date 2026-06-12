@@ -24,6 +24,27 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Agent Usage Settings").font(.title3).bold()
 
+            row("Menu bar shows") {
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(AppSettings.MenuBarMode.allCases) { mode in
+                        modeRow(mode)
+                    }
+                    if settings.menuBarMode == .selectedAgent {
+                        Picker("", selection: $settings.selectedAgentID) {
+                            if knownAgents.isEmpty {
+                                Text("No agents yet").tag("")
+                            }
+                            ForEach(knownAgents, id: \.id) { Text($0.label).tag($0.id) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 200)
+                        .padding(.leading, 24)
+                    }
+                }
+            }
+
+            Divider()
+
             row("Appearance") {
                 Picker("", selection: $settings.appearance) {
                     ForEach(AppSettings.Appearance.allCases) { Text($0.label).tag($0) }
@@ -78,6 +99,28 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 460, alignment: .leading)
+    }
+
+    /// A radio-style row for one menu bar display mode.
+    @ViewBuilder
+    private func modeRow(_ mode: AppSettings.MenuBarMode) -> some View {
+        let selected = settings.menuBarMode == mode
+        Button {
+            settings.menuBarMode = mode
+            if mode == .selectedAgent, settings.selectedAgentID.isEmpty, let first = knownAgents.first {
+                settings.selectedAgentID = first.id
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                Text(mode.label)
+                Text(mode.detail).font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder

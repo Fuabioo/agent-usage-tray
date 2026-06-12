@@ -51,6 +51,10 @@ final class StatusItemController {
             .sink { [weak self] _ in self?.updateBar() }.store(in: &cancellables)
         settings.$disabledAgentIDs.receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateBar() }.store(in: &cancellables)
+        settings.$menuBarMode.receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateBar() }.store(in: &cancellables)
+        settings.$selectedAgentID.receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateBar() }.store(in: &cancellables)
     }
 
     // MARK: - Clicks
@@ -139,46 +143,119 @@ final class StatusItemController {
         let agents = controller.merged.filter { settings.isEnabled($0.agent.id) }
         if agents.isEmpty {
             button.image = controller.runtimeError == nil ? Self.placeholderImage() : Self.errorImage()
-        } else {
-            button.image = Self.barImage(agents: agents)
+            return
         }
+        let out = renderBar(agents: agents)
+        button.image = out.length > 0 ? Self.render(out) : Self.placeholderImage()
     }
 
     // MARK: - Image drawing
 
-    /// One segment per agent: a pace-tinted glyph followed by `weekly · session %`.
-    private static func barImage(agents: [AgentSnapshot]) -> NSImage {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        let sep = NSColor.secondaryLabelColor
+    private static let barFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+
+    /// Build the menu bar content for the chosen display mode.
+    private func renderBar(agents: [AgentSnapshot]) -> NSAttributedString {
+        let font = Self.barFont
         let out = NSMutableAttributedString()
 
-        for (i, agent) in agents.enumerated() {
-            if i > 0 { out.append(segment("  ", color: sep, font: font)) }
-
-            if let glyph = AgentAssets.tintedGlyph(
-                forID: agent.agent.id,
-                color: agent.isError ? sep : agent.worstPace.nsColor,
-                size: font.pointSize + 1) {
-                out.append(attachment(glyph, font: font))
-                out.append(segment(" ", color: sep, font: font))
+        switch settings.menuBarMode {
+        case .iconOnly:
+            for (i, agent) in agents.enumerated() {
+                if i > 0 { out.append(Self.segment(" ", color: .secondaryLabelColor, font: font)) }
+                Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 3)
             }
+
+        case .worstMetric:
+            if let (w, _) = Self.worstAcross(agents) {
+                out.append(Self.segment(Self.intPct(w.usedPct) + "%", color: w.pace.nsColor, font: font))
+            }
+
+        case .iconWorst:
+            if let (w, agent) = Self.worstAcross(agents) {
+                Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 1)
+                out.append(Self.segment(" ", color: .secondaryLabelColor, font: font))
+                out.append(Self.segment(Self.intPct(w.usedPct) + "%", color: w.pace.nsColor, font: font))
+            }
+
+        case .perAgentPercent:
+            Self.appendPerAgent(out, agents: agents, font: font, both: false)
+
+        case .perAgentBoth:
+            Self.appendPerAgent(out, agents: agents, font: font, both: true)
+
+        case .onlyAttention:
+            let attention = agents.filter { !$0.isError && $0.worstPace.severity >= 1 }
+            if attention.isEmpty {
+                // Everything's on track — show the color-coded glyphs so the bar isn't blank.
+                for (i, agent) in agents.enumerated() {
+                    if i > 0 { out.append(Self.segment(" ", color: .secondaryLabelColor, font: font)) }
+                    Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 3)
+                }
+            } else {
+                Self.appendPerAgent(out, agents: attention, font: font, both: true)
+            }
+
+        case .selectedAgent:
+            let agent = agents.first { $0.agent.id == settings.selectedAgentID } ?? agents.first
+            if let agent { Self.appendPerAgent(out, agents: [agent], font: font, both: true) }
+        }
+        return out
+    }
+
+    /// A faint vertical divider between agents.
+    private static func separator(_ font: NSFont) -> NSAttributedString {
+        segment(" │ ", color: .tertiaryLabelColor, font: font)
+    }
+
+    /// Append a pace-tinted agent glyph.
+    private static func appendGlyph(
+        _ out: NSMutableAttributedString, agent: AgentSnapshot, font: NSFont, size: CGFloat
+    ) {
+        let color = agent.isError ? NSColor.secondaryLabelColor : agent.worstPace.nsColor
+        if let glyph = AgentAssets.tintedGlyph(forID: agent.agent.id, color: color, size: size) {
+            out.append(attachment(glyph, font: font))
+        }
+    }
+
+    /// Append each agent as `glyph weekly · session %` (both) or `glyph worst%`, divided.
+    private static func appendPerAgent(
+        _ out: NSMutableAttributedString, agents: [AgentSnapshot], font: NSFont, both: Bool
+    ) {
+        let sep = NSColor.secondaryLabelColor
+        for (i, agent) in agents.enumerated() {
+            if i > 0 { out.append(separator(font)) }
+            appendGlyph(out, agent: agent, font: font, size: font.pointSize + 1)
+            out.append(segment(" ", color: sep, font: font))
 
             if agent.isError {
                 out.append(segment("—", color: sep, font: font))
                 continue
             }
 
-            let weekly = agent.window("weekly")
-            let session = agent.window("session")
-            if let w = weekly, let s = session {
+            if both, let w = agent.window("weekly"), let s = agent.window("session") {
                 out.append(segment(intPct(w.usedPct), color: w.pace.nsColor, font: font))
                 out.append(segment(" · ", color: sep, font: font))
                 out.append(segment(intPct(s.usedPct) + "%", color: s.pace.nsColor, font: font))
-            } else if let only = agent.primaryWindow {
-                out.append(segment(intPct(only.usedPct) + "%", color: only.pace.nsColor, font: font))
+            } else if let w = worstWindow(agent) {
+                out.append(segment(intPct(w.usedPct) + "%", color: w.pace.nsColor, font: font))
             }
         }
-        return render(out)
+    }
+
+    /// The window with the highest utilization for one agent.
+    private static func worstWindow(_ agent: AgentSnapshot) -> WindowDTO? {
+        (agent.windows ?? []).max { $0.usedPct < $1.usedPct }
+    }
+
+    /// The single highest-utilization window across all (non-error) agents, with its agent.
+    private static func worstAcross(_ agents: [AgentSnapshot]) -> (WindowDTO, AgentSnapshot)? {
+        var best: (WindowDTO, AgentSnapshot)?
+        for agent in agents where !agent.isError {
+            for w in agent.windows ?? [] where best == nil || w.usedPct > best!.0.usedPct {
+                best = (w, agent)
+            }
+        }
+        return best
     }
 
     private static func intPct(_ v: Double) -> String { String(Int(v.rounded())) }

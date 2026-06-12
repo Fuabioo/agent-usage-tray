@@ -18,6 +18,44 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// What the menu bar item shows (the prototype's "Menu bar shows:" options, plus an
+    /// "only attention" filter).
+    enum MenuBarMode: String, CaseIterable, Identifiable {
+        case iconOnly          // each agent's glyph, tinted by its pace; no numbers
+        case worstMetric       // the single highest utilization across agents, e.g. "88%"
+        case iconWorst         // the worst agent's glyph + that number
+        case perAgentPercent   // each agent: glyph + one % (its worst window)
+        case perAgentBoth      // each agent: glyph + weekly · session %
+        case onlyAttention     // per-agent · both, but only agents at yellow/red
+        case selectedAgent     // only the chosen agent: glyph + weekly · session %
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .iconOnly: return "Icon only"
+            case .worstMetric: return "Worst metric"
+            case .iconWorst: return "Icon + worst"
+            case .perAgentPercent: return "Per-agent %"
+            case .perAgentBoth: return "Per-agent · both windows"
+            case .onlyAttention: return "Only yellow / red"
+            case .selectedAgent: return "Selected agent only"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .iconOnly: return "color-coded glyphs"
+            case .worstMetric: return "e.g. “88%”"
+            case .iconWorst: return "glyph + number"
+            case .perAgentPercent: return "one per agent"
+            case .perAgentBoth: return "5h + weekly"
+            case .onlyAttention: return "hide on-track agents"
+            case .selectedAgent: return "pick one"
+            }
+        }
+    }
+
     @Published var workDays: Int {
         didSet {
             workDays = min(max(workDays, 1), 7)
@@ -36,12 +74,23 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(Array(disabledAgentIDs), forKey: Keys.disabledAgents) }
     }
 
+    @Published var menuBarMode: MenuBarMode {
+        didSet { defaults.set(menuBarMode.rawValue, forKey: Keys.menuBarMode) }
+    }
+
+    /// The agent shown in `.selectedAgent` mode (its id).
+    @Published var selectedAgentID: String {
+        didSet { defaults.set(selectedAgentID, forKey: Keys.selectedAgentID) }
+    }
+
     private let defaults: UserDefaults
 
     private enum Keys {
         static let workDays = "workDays"
         static let appearance = "appearance"
         static let disabledAgents = "disabledAgentIDs"
+        static let menuBarMode = "menuBarMode"
+        static let selectedAgentID = "selectedAgentID"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -51,6 +100,9 @@ final class AppSettings: ObservableObject {
         self.appearance = Appearance(rawValue: defaults.string(forKey: Keys.appearance) ?? "")
             ?? .system
         self.disabledAgentIDs = Set(defaults.stringArray(forKey: Keys.disabledAgents) ?? [])
+        self.menuBarMode = MenuBarMode(rawValue: defaults.string(forKey: Keys.menuBarMode) ?? "")
+            ?? .perAgentBoth
+        self.selectedAgentID = defaults.string(forKey: Keys.selectedAgentID) ?? ""
     }
 
     /// Expected percent consumed per work day, so a full week of work days totals 100%
