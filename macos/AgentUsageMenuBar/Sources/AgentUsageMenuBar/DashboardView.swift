@@ -141,7 +141,7 @@ private struct AgentRingView: View {
                     .rotationEffect(.degrees(-90))
                 AgentGlyphView(agentID: snapshot.agent.id,
                                nsColor: snapshot.isError ? .secondaryLabelColor : nsColor,
-                               size: 18)
+                               size: 24)
             }
             .frame(width: 52, height: 52)
 
