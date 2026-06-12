@@ -196,20 +196,41 @@ private struct AgentDetail: View {
                 Text("error").foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             } else {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(orderedWindows, id: \.label) { w in
-                        HStack(spacing: 8) {
-                            Text("\(w.label) left").foregroundStyle(.secondary)
-                            Spacer(minLength: 12)
-                            Text("\(Int(w.remainingPct.rounded()))%")
-                                .bold()
-                                .foregroundStyle(w.pace.swiftUIColor)
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(orderedWindows, id: \.label) { WindowLine(window: $0) }
                 }
             }
         }
         .font(.callout)
+    }
+}
+
+/// One window: its remaining ("left") percentage, plus the exact local reset moment and a
+/// countdown beneath it.
+private struct WindowLine: View {
+    let window: WindowDTO
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
+                Text("\(window.label) left").foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+                Text("\(Int(window.remainingPct.rounded()))%")
+                    .bold()
+                    .foregroundStyle(window.pace.swiftUIColor)
+            }
+            if let reset = window.resetsAt {
+                HStack(spacing: 8) {
+                    Text("resets \(localResetString(reset))")
+                    Spacer(minLength: 12)
+                    if let secs = window.resetsInSecs, secs > 0 {
+                        Text("in \(formatDuration(seconds: secs))")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
+        }
     }
 }
 

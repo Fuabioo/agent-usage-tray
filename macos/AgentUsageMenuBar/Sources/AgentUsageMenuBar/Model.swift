@@ -168,3 +168,12 @@ func shortWeekday(_ date: Date) -> String {
     f.dateFormat = "EEE"
     return f.string(from: date)
 }
+
+/// The exact reset moment in the user's local timezone, e.g. "Mon Jun 15, 8:00 PM".
+/// `DateFormatter` uses the current timezone and locale by default, so this follows whatever
+/// timezone the machine is in.
+func localResetString(_ date: Date) -> String {
+    let f = DateFormatter()
+    f.dateFormat = "EEE MMM d, h:mm a"
+    return f.string(from: date)
+}
