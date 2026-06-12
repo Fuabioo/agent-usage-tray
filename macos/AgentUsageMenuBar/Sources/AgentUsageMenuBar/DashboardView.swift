@@ -142,17 +142,17 @@ private struct AgentRingView: View {
 
     @Environment(\.colorScheme) private var scheme
 
-    /// A metallic gold gradient for the surplus ring — built from golds that stay readable on the
-    /// current background (deeper in Light mode, brighter in Dark) so it reads premium without
-    /// washing out. Only the ring stroke uses it; the text and glyph use a solid readable gold.
-    private var goldRing: AngularGradient {
+    /// A metallic mint gradient for the surplus ring — built from mints that stay readable on the
+    /// current background (deeper teal in Light mode, brighter in Dark) so it reads premium
+    /// without washing out. Only the ring stroke uses it; the text and glyph use a solid mint.
+    private var mintRing: AngularGradient {
         let stops: [Color] = scheme == .dark
-            ? [Color(red: 1.00, green: 0.90, blue: 0.50), Color(red: 0.93, green: 0.74, blue: 0.32),
-               Color(red: 1.00, green: 0.85, blue: 0.42), Color(red: 0.88, green: 0.68, blue: 0.26),
-               Color(red: 1.00, green: 0.90, blue: 0.50)]
-            : [Color(red: 0.78, green: 0.58, blue: 0.08), Color(red: 0.56, green: 0.42, blue: 0.04),
-               Color(red: 0.72, green: 0.53, blue: 0.06), Color(red: 0.48, green: 0.36, blue: 0.00),
-               Color(red: 0.78, green: 0.58, blue: 0.08)]
+            ? [Color(red: 0.42, green: 0.98, blue: 0.84), Color(red: 0.22, green: 0.82, blue: 0.68),
+               Color(red: 0.38, green: 0.94, blue: 0.80), Color(red: 0.16, green: 0.74, blue: 0.62),
+               Color(red: 0.42, green: 0.98, blue: 0.84)]
+            : [Color(red: 0.00, green: 0.62, blue: 0.52), Color(red: 0.00, green: 0.44, blue: 0.38),
+               Color(red: 0.00, green: 0.56, blue: 0.48), Color(red: 0.00, green: 0.40, blue: 0.34),
+               Color(red: 0.00, green: 0.62, blue: 0.52)]
         return AngularGradient(gradient: Gradient(colors: stops), center: .center)
     }
 
@@ -161,7 +161,7 @@ private struct AgentRingView: View {
         let color = Color(nsColor: m.nsColor)
         let ringStyle: AnyShapeStyle = m.isError
             ? AnyShapeStyle(Color.secondary.opacity(0.4))
-            : (m.isSurplus ? AnyShapeStyle(goldRing) : AnyShapeStyle(color))
+            : (m.isSurplus ? AnyShapeStyle(mintRing) : AnyShapeStyle(color))
 
         VStack(spacing: 6) {
             ZStack {

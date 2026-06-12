@@ -26,9 +26,9 @@ enum PaceColor: String, Codable {
     var nsColor: NSColor {
         switch self {
         case .surplus:
-            // A warm gold, dark enough to read on the light popover, bright on dark. Higher
-            // green channel than the warning amber keeps it golden, not orange.
-            return .paceAdaptive(light: (0.557, 0.420, 0.039), dark: (1.0, 0.843, 0.345))
+            // A fresh mint/teal — clearly distinct from both the warning amber and the on-track
+            // green (it leans cyan). Deep enough to read on the light popover, bright on dark.
+            return .paceAdaptive(light: (0.000, 0.482, 0.420), dark: (0.341, 0.929, 0.792))
         case .green:
             return .paceAdaptive(light: (0.082, 0.502, 0.239), dark: (0.290, 0.871, 0.502))
         case .yellow:
