@@ -33,7 +33,9 @@ enum AgentAssets {
         guard let url = Bundle.main.resourceURL?.appendingPathComponent("\(id).png"),
               let image = NSImage(contentsOf: url)
         else { return nil }
-        image.isTemplate = true // tintable; we recolor by pace
+        // We always tint manually (Core Graphics for the menu bar, a SwiftUI `.mask` for the
+        // dashboard), so the image stays a plain black-on-transparent bitmap — not a template.
+        image.isTemplate = false
         return image
     }
 
@@ -80,13 +82,17 @@ struct AgentGlyphView: View {
 
     var body: some View {
         if let logo = AgentAssets.logo(forID: agentID) {
-            Image(nsImage: logo)
-                .resizable()
-                .renderingMode(.template)
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
+            // Tint by masking a solid color with the full-resolution logo. This keeps SwiftUI's
+            // high-quality downscaling (unlike `.renderingMode(.template)`, which rasterizes the
+            // mask coarsely and looks grainy at small sizes).
+            color
                 .frame(width: size, height: size)
-                .foregroundStyle(color)
+                .mask(
+                    Image(nsImage: logo)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                )
         } else {
             Image(systemName: AgentAssets.symbolName(forID: agentID))
                 .font(.system(size: size, weight: .semibold))
