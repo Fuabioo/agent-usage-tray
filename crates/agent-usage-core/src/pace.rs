@@ -115,13 +115,17 @@ pub fn compute_pool_color(used_pct: f64, depletes_before_reset: bool) -> PaceCol
 
 /// Counts work days elapsed in the cycle, in the user's **local** timezone.
 ///
-/// The cycle starts at `resets_at - 7 days`; work days are counted as distinct **local calendar
-/// dates** from the cycle start through today, inclusive. For `work_days <= 5` only Mon–Fri
-/// count; for `work_days > 5` every day counts. Result is clamped to `[1, work_days]`.
+/// The cycle starts at `resets_at - 7 days` and is divided into reset-aligned 24h periods. Each
+/// period is attributed to the **local calendar day its working hours fall on** — approximated by
+/// the date 12h into the period, so an evening reset maps a period to the *next* day's work and a
+/// morning reset to the same day. For `work_days <= 5` only Mon–Fri periods count; for
+/// `work_days > 5` every period counts. The current (partial) period is included. Clamped to
+/// `[1, work_days]`.
 ///
-/// Using the local calendar (not UTC) is what makes "day N/M" match the wall clock: a reset at,
-/// say, 8 pm local lands on a different *UTC* date, so UTC counting is off by one (Friday would
-/// read as day 4 of a Mon-reset 5-day week instead of day 5).
+/// This is what makes "day N/M" match the wall clock. Example: a reset Monday 8 pm means the
+/// cycle's first period (Mon 8 pm → Tue 8 pm) is *Tuesday's* work day, the Monday-daytime work
+/// before the reset belongs to the previous cycle, and the next Monday (its 9–5 is before the
+/// next 8 pm reset) is the cycle's 5th work day — so Friday reads as day 4 of 5, not 5.
 pub fn days_into_cycle(resets_at: DateTime<Utc>, now: DateTime<Utc>, work_days: u8) -> u8 {
     work_days_elapsed(resets_at, now, work_days, &Local)
 }
@@ -137,23 +141,17 @@ fn work_days_elapsed<Tz: TimeZone>(
         return 1;
     }
 
-    let start = cycle_start.with_timezone(tz).date_naive();
-    let today = now.with_timezone(tz).date_naive();
+    let total_periods = ((now - cycle_start).num_days() + 1).clamp(1, CYCLE_LENGTH);
 
     let mut count: u8 = 0;
-    let mut day = start;
-    // At most one cycle's worth of calendar days (guards against stale `now`).
-    for _ in 0..=CYCLE_LENGTH {
-        if day > today {
-            break;
-        }
-        let weekend = matches!(day.weekday(), Weekday::Sat | Weekday::Sun);
+    for i in 0..total_periods {
+        // The calendar day a reset-period's working hours fall on (period start + 12h).
+        let work_day = (cycle_start + chrono::Duration::days(i) + chrono::Duration::hours(12))
+            .with_timezone(tz)
+            .date_naive();
+        let weekend = matches!(work_day.weekday(), Weekday::Sat | Weekday::Sun);
         if work_days > 5 || !weekend {
             count = count.saturating_add(1);
-        }
-        match day.succ_opt() {
-            Some(next) => day = next,
-            None => break,
         }
     }
 
@@ -299,17 +297,20 @@ mod tests {
         assert_eq!(wde(resets, now, 7), 5);
     }
 
-    /// The reported bug: work days are counted by *local* calendar date, not UTC. A reset at
-    /// 8pm CST lands on the next UTC date, so UTC counting was off by one.
+    /// A reset Monday 8pm: the cycle's work days are Tue, Wed, Thu, Fri, and the *next* Monday
+    /// (its 9–5 is before the next 8pm reset). The Monday-daytime work at the cycle start belongs
+    /// to the previous cycle. So Friday is day 4, and the following Monday is day 5.
     #[test]
-    fn work_day_counts_in_local_calendar_not_utc() {
-        // Reset Mon Jun 15 2026 ~8pm CST (= Jun 16 02:00 UTC); cycle started Mon Jun 8 8pm CST.
-        let resets = utc(2026, 6, 16, 2, 0);
-        let now = utc(2026, 6, 12, 22, 0); // Fri Jun 12, 4pm CST
+    fn friday_with_monday_8pm_reset_is_day_4() {
         let cst = FixedOffset::west_opt(6 * 3600).unwrap();
-        // Local (CST): Mon, Tue, Wed, Thu, Fri = 5 work days.
-        assert_eq!(work_days_elapsed(resets, now, 5, &cst), 5);
-        // UTC counting gives the off-by-one the user saw.
-        assert_eq!(work_days_elapsed(resets, now, 5, &Utc), 4);
+        // Reset Mon Jun 15 2026 8pm CST (= Jun 16 02:00 UTC); cycle started Mon Jun 8 8pm CST.
+        let resets = utc(2026, 6, 16, 2, 0);
+        // Fri Jun 12, 4pm CST -> Tue, Wed, Thu, Fri elapsed.
+        assert_eq!(work_days_elapsed(resets, utc(2026, 6, 12, 22, 0), 5, &cst), 4);
+        // Next Mon Jun 15, noon CST (before the 8pm reset) -> the 5th work day.
+        assert_eq!(work_days_elapsed(resets, utc(2026, 6, 15, 18, 0), 5, &cst), 5);
+        // Sat/Sun don't advance it (still 4).
+        assert_eq!(work_days_elapsed(resets, utc(2026, 6, 13, 22, 0), 5, &cst), 4);
+        assert_eq!(work_days_elapsed(resets, utc(2026, 6, 14, 22, 0), 5, &cst), 4);
     }
 }
