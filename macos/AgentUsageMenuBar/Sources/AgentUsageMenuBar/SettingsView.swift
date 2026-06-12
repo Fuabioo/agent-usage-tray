@@ -72,26 +72,27 @@ struct SettingsView: View {
             Divider()
 
             row("Agents") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     if knownAgents.isEmpty {
                         Text("No agents reported yet.").font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(knownAgents, id: \.id) { agent in
-                        Toggle(isOn: Binding(
-                            get: { settings.isEnabled(agent.id) },
-                            set: { settings.setEnabled($0, agentID: agent.id) }
-                        )) {
-                            HStack(spacing: 8) {
-                                AgentGlyphView(agentID: agent.id, nsColor: .labelColor, size: 15)
-                                    .frame(width: 16)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(agent.label).font(.callout)
-                                    Text("via \(agent.source)").font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
+                        HStack(spacing: 10) {
+                            AgentGlyphView(agentID: agent.id, nsColor: .labelColor, size: 16)
+                                .frame(width: 18, height: 18)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(agent.label).font(.callout)
+                                Text("via \(agent.source)").font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
+                            Spacer(minLength: 12)
+                            Toggle("", isOn: Binding(
+                                get: { settings.isEnabled(agent.id) },
+                                set: { settings.setEnabled($0, agentID: agent.id) }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
                         }
-                        .toggleStyle(.switch)
                         .frame(width: 300)
                     }
                 }
