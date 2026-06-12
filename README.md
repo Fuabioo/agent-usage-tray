@@ -75,7 +75,15 @@ agent-usage claude --daily-budget 20 --work-days 5
 agent-usage claude --timeout 30
 agent-usage claude --keychain-service "Claude Code-credentials"   # macOS
 agent-usage claude --no-keychain
+agent-usage claude --cache-ttl 60      # reuse a cached snapshot for N secs (0 = always fetch)
+agent-usage claude --no-cache          # never read/write the cache
 ```
+
+**Caching.** JSON results are cached per agent at `~/.cache/agent-usage/<id>.json`. Repeated
+calls within `--cache-ttl` (default 60s) reuse the cached snapshot instead of re-hitting the
+usage source — this keeps the app's frequent polling from tripping API rate limits. On a
+*transient* failure (rate limit, network) the last good snapshot is served instead of an error,
+marked `"stale": true`; auth/credential errors still surface. (`--status` always fetches live.)
 
 The JSON document is the stable contract the GUIs consume. On failure it still prints valid
 JSON with an `error` object and exits non-zero. Shape (success):

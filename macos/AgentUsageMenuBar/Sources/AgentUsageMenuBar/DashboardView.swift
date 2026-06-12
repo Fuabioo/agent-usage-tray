@@ -86,8 +86,14 @@ struct DashboardView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            if displayAgents.contains(where: { $0.isStale }) {
+                Text("· cached")
+                    .font(.caption2)
+                    .foregroundStyle(PaceColor.yellow.swiftUIColor)
+                    .help("Showing the last good data — a refresh failed (rate limit or network).")
+            }
             Spacer()
-            Button("Refresh") { controller.refresh() }
+            Button("Refresh") { controller.refresh(force: true) }
                 .buttonStyle(.borderless)
                 .font(.caption)
             Button {

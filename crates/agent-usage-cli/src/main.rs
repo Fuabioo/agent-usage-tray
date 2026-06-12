@@ -10,15 +10,17 @@
 //! behind a given subcommand differs. On failure the CLI still prints a valid JSON document
 //! carrying an `error` object and exits non-zero, so GUI callers can always parse the result.
 
+mod cache;
 mod output;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agent_usage_core::{AgentInfo, Budget, FetchOptions, Provider};
+use agent_usage_core::{AgentInfo, Budget, FetchOptions, Provider, UsageError};
 use chrono::Utc;
 use clap::Parser;
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -63,6 +65,15 @@ struct Cli {
     /// Disable the macOS Keychain fallback (only read the credentials file).
     #[arg(long)]
     no_keychain: bool,
+
+    /// Seconds a cached snapshot stays fresh: repeated calls within this window reuse it instead
+    /// of re-hitting the usage source. 0 disables reuse (but still serves stale on error).
+    #[arg(long, default_value_t = 60, value_name = "SECS")]
+    cache_ttl: u64,
+
+    /// Don't read or write the on-disk usage cache at all.
+    #[arg(long)]
+    no_cache: bool,
 }
 
 fn main() {
@@ -96,75 +107,133 @@ fn run(cli: &Cli) -> i32 {
     }
 }
 
-/// Fetch and render a single agent. Returns 0 on success, 1 on a usage error.
+/// Fetch and render a single agent. Returns 0 on success/stale, 1 on a usage error.
+///
+/// `--status` always fetches live (humans can retry); JSON output goes through the cache so the
+/// app gets dedupe + stale-on-error resilience.
 fn run_one(cli: &Cli, provider: &dyn Provider, budget: &Budget) -> i32 {
     let now = Utc::now();
-    let opts = fetch_options(cli);
 
-    match provider.fetch(&opts) {
-        Ok(usage) => {
-            let snap = output::build_snapshot(&usage, budget, now);
-            if cli.status {
-                print!("{}", output::render_status(&snap, now));
-            } else {
-                print_json(&snap);
+    if cli.status {
+        let opts = fetch_options(cli);
+        return match provider.fetch(&opts) {
+            Ok(usage) => {
+                print!("{}", output::render_status(&output::build_snapshot(&usage, budget, now), now));
+                0
             }
-            0
-        }
-        Err(err) => {
-            let info = AgentInfo {
-                id: provider.id().to_string(),
-                label: provider.label().to_string(),
-                source: provider.source().to_string(),
-            };
-            let snap = output::build_error_snapshot(&info, &err, budget, now);
-            if cli.status {
+            Err(err) => {
+                let snap = output::build_error_snapshot(&agent_info(provider), &err, budget, now);
                 eprint!("{}", output::render_status(&snap, now));
-            } else {
-                print_json(&snap);
+                1
             }
-            1
-        }
+        };
     }
+
+    let (value, code) = agent_json(cli, provider, budget, now);
+    print_json(&value);
+    code
 }
 
 /// Fetch every known agent. JSON form is an array of snapshots; exits 1 if any agent errored.
 fn run_all(cli: &Cli, budget: &Budget) -> i32 {
     let now = Utc::now();
-    let opts = fetch_options(cli);
-
-    let mut snapshots = Vec::new();
-    let mut any_err = false;
-
-    for provider in agent_usage_providers::all() {
-        let snap = match provider.fetch(&opts) {
-            Ok(usage) => output::build_snapshot(&usage, budget, now),
-            Err(err) => {
-                any_err = true;
-                let info = AgentInfo {
-                    id: provider.id().to_string(),
-                    label: provider.label().to_string(),
-                    source: provider.source().to_string(),
-                };
-                output::build_error_snapshot(&info, &err, budget, now)
-            }
-        };
-        snapshots.push(snap);
-    }
 
     if cli.status {
-        for snap in &snapshots {
-            print!("{}", output::render_status(snap, now));
+        let opts = fetch_options(cli);
+        let mut any_err = false;
+        for provider in agent_usage_providers::all() {
+            let snap = match provider.fetch(&opts) {
+                Ok(usage) => output::build_snapshot(&usage, budget, now),
+                Err(err) => {
+                    any_err = true;
+                    output::build_error_snapshot(&agent_info(provider.as_ref()), &err, budget, now)
+                }
+            };
+            print!("{}", output::render_status(&snap, now));
         }
-    } else {
-        print_json(&snapshots);
+        return if any_err { 1 } else { 0 };
     }
 
+    let mut values = Vec::new();
+    let mut any_err = false;
+    for provider in agent_usage_providers::all() {
+        let (value, code) = agent_json(cli, provider.as_ref(), budget, now);
+        if code != 0 {
+            any_err = true;
+        }
+        values.push(value);
+    }
+    print_json(&values);
     if any_err {
         1
     } else {
         0
     }
+}
+
+/// Produce one agent's JSON snapshot as a `serde_json::Value`, applying the cache:
+/// a fresh cached snapshot is reused; on a transient fetch error the last cached snapshot is
+/// served (marked `stale`); otherwise an error snapshot is returned (exit code 1).
+fn agent_json(cli: &Cli, provider: &dyn Provider, budget: &Budget, now: chrono::DateTime<Utc>) -> (Value, i32) {
+    let id = provider.id();
+    let use_cache = !cli.no_cache;
+
+    // Fresh cache: reuse without touching the source.
+    if use_cache && cli.cache_ttl > 0 {
+        if let Some((age, contents)) = cache::read(id) {
+            if age < Duration::from_secs(cli.cache_ttl) {
+                if let Ok(v) = serde_json::from_str::<Value>(&contents) {
+                    return (v, 0);
+                }
+            }
+        }
+    }
+
+    let opts = fetch_options(cli);
+    match provider.fetch(&opts) {
+        Ok(usage) => {
+            let snap = output::build_snapshot(&usage, budget, now);
+            if use_cache {
+                if let Ok(s) = serde_json::to_string_pretty(&snap) {
+                    cache::write(id, &s);
+                }
+            }
+            (serde_json::to_value(&snap).unwrap_or(Value::Null), 0)
+        }
+        Err(err) => {
+            // Serve the last good snapshot on a transient failure, marked stale.
+            if use_cache && is_transient(&err) {
+                if let Some((_, contents)) = cache::read(id) {
+                    if let Ok(mut v) = serde_json::from_str::<Value>(&contents) {
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert("stale".into(), Value::Bool(true));
+                            obj.insert("stale_reason".into(), Value::String(err.to_string()));
+                        }
+                        return (v, 0);
+                    }
+                }
+            }
+            let snap = output::build_error_snapshot(&agent_info(provider), &err, budget, now);
+            (serde_json::to_value(&snap).unwrap_or(Value::Null), 1)
+        }
+    }
+}
+
+fn agent_info(provider: &dyn Provider) -> AgentInfo {
+    AgentInfo {
+        id: provider.id().to_string(),
+        label: provider.label().to_string(),
+        source: provider.source().to_string(),
+    }
+}
+
+/// Errors worth serving stale data through (a passing blip), vs. ones the user must act on
+/// (auth/credentials/unsupported), which should surface as errors.
+fn is_transient(err: &UsageError) -> bool {
+    matches!(
+        err.kind(),
+        "network" | "rate_limited" | "unexpected_status" | "parse" | "no_data"
+    )
 }
 
 #[derive(Serialize)]

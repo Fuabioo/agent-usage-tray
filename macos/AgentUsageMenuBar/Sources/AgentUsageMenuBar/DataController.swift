@@ -60,12 +60,15 @@ final class DataController: ObservableObject {
         }
     }
 
-    func refresh() {
+    /// Refresh. `force` (a manual Refresh) bypasses the CLI's fresh-cache reuse so it always tries
+    /// the live source — but the CLI still serves stale data on a transient error.
+    func refresh(force: Bool = false) {
         let workDays = settings.workDays
         let dailyBudget = settings.dailyBudget
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            let result = Self.runCLI(decoder: self.decoder, workDays: workDays, dailyBudget: dailyBudget)
+            let result = Self.runCLI(
+                decoder: self.decoder, workDays: workDays, dailyBudget: dailyBudget, bypassCache: force)
             DispatchQueue.main.async { self.apply(result) }
         }
     }
@@ -85,17 +88,20 @@ final class DataController: ObservableObject {
 
     /// Run `agent-usage all --json --work-days N --daily-budget B` and decode the array.
     private static func runCLI(
-        decoder: JSONDecoder, workDays: Int, dailyBudget: Double
+        decoder: JSONDecoder, workDays: Int, dailyBudget: Double, bypassCache: Bool
     ) -> Result<[AgentSnapshot], CLIError> {
         let launch = resolveLaunch()
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launch.executable)
-        process.arguments = launch.leadingArgs + [
+        var args = launch.leadingArgs + [
             "all", "--json",
             "--work-days", String(workDays),
             "--daily-budget", String(format: "%.4f", dailyBudget),
         ]
+        // A forced refresh skips fresh-cache reuse (still serves stale on a transient error).
+        if bypassCache { args += ["--cache-ttl", "0"] }
+        process.arguments = args
 
         let stdout = Pipe()
         process.standardOutput = stdout

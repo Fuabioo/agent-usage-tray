@@ -100,7 +100,7 @@ final class StatusItemController {
         statusItem.menu = nil
     }
 
-    @objc private func refresh() { controller.refresh() }
+    @objc private func refresh() { controller.refresh(force: true) }
     @objc private func quit() { NSApp.terminate(nil) }
     @objc private func openSettingsMenu() { openSettings() }
 

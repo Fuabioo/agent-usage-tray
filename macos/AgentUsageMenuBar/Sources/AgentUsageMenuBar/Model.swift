@@ -56,9 +56,12 @@ struct AgentSnapshot: Codable, Identifiable {
     let windows: [WindowDTO]?
     let pace: PaceSummaryDTO?
     let error: ErrorDTO?
+    /// Set by the CLI when it served a cached snapshot after a transient fetch failure.
+    let stale: Bool?
 
     var id: String { agent.id }
     var isError: Bool { error != nil }
+    var isStale: Bool { stale == true }
 
     /// The first window of a given kind ("weekly", "session", "credits").
     func window(_ kind: String) -> WindowDTO? {
