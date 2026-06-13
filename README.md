@@ -35,8 +35,8 @@ crates/
                            - projection (burn-rate → depletion date, "out before reset?")
   agent-usage-providers/   Concrete providers + a registry:
                            - claude  (real — Anthropic OAuth usage API; file + macOS Keychain)
-                           - codex   (real — reads the freshest rate_limits event from the
-                             newest ~/.codex/sessions rollout log; no network, no token)
+                           - codex   (real — Codex/ChatGPT usage API at backend-api/wham/usage;
+                             ChatGPT token from ~/.codex/auth.json — live, like Claude)
                            - shared creds + tiny blocking HTTP helper (ureq)
   agent-usage-cli/         `agent-usage` binary: per-agent subcommands, one JSON/`--status`
                            contract for every agent.
