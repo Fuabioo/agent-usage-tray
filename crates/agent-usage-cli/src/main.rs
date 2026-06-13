@@ -171,20 +171,24 @@ fn run_all(cli: &Cli, budget: &Budget) -> i32 {
     }
 }
 
-/// Produce one agent's JSON snapshot as a `serde_json::Value`, applying the cache:
-/// a fresh cached snapshot is reused; on a transient fetch error the last cached snapshot is
-/// served (marked `stale`); otherwise an error snapshot is returned (exit code 1).
+/// Produce one agent's JSON snapshot as a `serde_json::Value`, applying the cache.
+///
+/// The cache stores the agent's **raw usage** (not the rendered snapshot), and the snapshot —
+/// pace, work-day index, reset countdowns — is recomputed from it on every call against the
+/// current `budget` and `now`. So a fresh cache hit still reflects the latest work-days setting
+/// and live countdowns; only the underlying usage is reused to avoid re-hitting the source. On a
+/// transient fetch error the last cached usage is served, marked `stale`; otherwise an error
+/// snapshot is returned (exit code 1).
 fn agent_json(cli: &Cli, provider: &dyn Provider, budget: &Budget, now: chrono::DateTime<Utc>) -> (Value, i32) {
     let id = provider.id();
     let use_cache = !cli.no_cache;
 
-    // Fresh cache: reuse without touching the source.
+    // Fresh cache: recompute the snapshot from cached usage without touching the source.
     if use_cache && cli.cache_ttl > 0 {
-        if let Some((age, contents)) = cache::read(id) {
+        if let Some((age, usage)) = read_cached_usage(id) {
             if age < Duration::from_secs(cli.cache_ttl) {
-                if let Ok(v) = serde_json::from_str::<Value>(&contents) {
-                    return (v, 0);
-                }
+                let snap = output::build_snapshot(&usage, budget, now);
+                return (serde_json::to_value(&snap).unwrap_or(Value::Null), 0);
             }
         }
     }
@@ -192,30 +196,37 @@ fn agent_json(cli: &Cli, provider: &dyn Provider, budget: &Budget, now: chrono::
     let opts = fetch_options(cli);
     match provider.fetch(&opts) {
         Ok(usage) => {
-            let snap = output::build_snapshot(&usage, budget, now);
             if use_cache {
-                if let Ok(s) = serde_json::to_string_pretty(&snap) {
-                    cache::write(id, &s);
-                }
+                write_cached_usage(id, &usage);
             }
+            let snap = output::build_snapshot(&usage, budget, now);
             (serde_json::to_value(&snap).unwrap_or(Value::Null), 0)
         }
         Err(err) => {
-            // Serve the last good snapshot on a transient failure, marked stale.
+            // Serve last good usage on a transient failure, recomputed and marked stale.
             if use_cache && is_transient(&err) {
-                if let Some((_, contents)) = cache::read(id) {
-                    if let Ok(mut v) = serde_json::from_str::<Value>(&contents) {
-                        if let Some(obj) = v.as_object_mut() {
-                            obj.insert("stale".into(), Value::Bool(true));
-                            obj.insert("stale_reason".into(), Value::String(err.to_string()));
-                        }
-                        return (v, 0);
-                    }
+                if let Some((_, usage)) = read_cached_usage(id) {
+                    let mut snap = output::build_snapshot(&usage, budget, now);
+                    snap.stale = Some(true);
+                    snap.stale_reason = Some(err.to_string());
+                    return (serde_json::to_value(&snap).unwrap_or(Value::Null), 0);
                 }
             }
             let snap = output::build_error_snapshot(&agent_info(provider), &err, budget, now);
             (serde_json::to_value(&snap).unwrap_or(Value::Null), 1)
         }
+    }
+}
+
+fn read_cached_usage(id: &str) -> Option<(Duration, agent_usage_core::Usage)> {
+    let (age, contents) = cache::read(id)?;
+    let usage = serde_json::from_str(&contents).ok()?;
+    Some((age, usage))
+}
+
+fn write_cached_usage(id: &str, usage: &agent_usage_core::Usage) {
+    if let Ok(s) = serde_json::to_string(usage) {
+        cache::write(id, &s);
     }
 }
 

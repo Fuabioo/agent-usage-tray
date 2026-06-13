@@ -8,10 +8,11 @@
 //! menu bar, the COSMIC applet) only ever speaks this vocabulary.
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// What an agent is and where its numbers came from. Filled in even on error so callers can
 /// label a failing agent.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentInfo {
     /// Stable lowercase id, also the CLI subcommand (e.g. `claude`, `codex`).
     pub id: String,
@@ -22,14 +23,14 @@ pub struct AgentInfo {
 }
 
 /// A normalized usage snapshot for a single agent: who it is plus every window it exposes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Usage {
     pub agent: AgentInfo,
     pub windows: Vec<Window>,
 }
 
 /// The role a window plays. Drives how pace color is computed and how it is labeled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WindowKind {
     /// A short rolling window (Claude's 5-hour session, Codex's "5h limit").
     Session,
@@ -54,7 +55,7 @@ impl WindowKind {
 }
 
 /// How a window measures consumption.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Metric {
     /// Percent of the window consumed (0.0–100.0+, can exceed 100 when over budget).
     Utilization { used_pct: f64 },
@@ -68,7 +69,7 @@ pub enum Metric {
 }
 
 /// A single usage window normalized across agents.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Window {
     pub kind: WindowKind,
     /// Display label as the agent names it ("session", "5h limit", "weekly", "credits").

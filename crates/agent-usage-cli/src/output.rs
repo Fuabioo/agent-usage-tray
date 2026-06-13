@@ -20,6 +20,11 @@ pub struct Snapshot {
     pub windows: Vec<WindowDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pace: Option<PaceSummaryDto>,
+    /// Set when served from cache after a transient fetch failure (last good data).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorDto>,
 }
@@ -188,6 +193,8 @@ pub fn build_snapshot(usage: &Usage, budget: &Budget, now: DateTime<Utc>) -> Sna
         config: ConfigDto::from_budget(budget),
         windows,
         pace,
+        stale: None,
+        stale_reason: None,
         error: None,
     }
 }
@@ -205,6 +212,8 @@ pub fn build_error_snapshot(
         config: ConfigDto::from_budget(budget),
         windows: Vec::new(),
         pace: None,
+        stale: None,
+        stale_reason: None,
         error: Some(ErrorDto {
             kind: err.kind().to_string(),
             message: err.to_string(),

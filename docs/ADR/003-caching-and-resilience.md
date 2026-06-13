@@ -36,9 +36,15 @@ A small **on-disk, per-agent cache** in the CLI, at `~/.cache/agent-usage/<id>.j
    code 0. Errors the user must act on (`unauthorized`, the `credentials_*` family, `unsupported`)
    still surface as error snapshots.
 
-`--status` always fetches live (a human can retry); `--no-cache` disables both behaviors. The
-cache stores the rendered snapshot JSON, so a fresh-cache hit prints it verbatim and a
-stale-on-error hit just injects the `stale` flag — no core changes, no extra serialization.
+`--status` always fetches live (a human can retry); `--no-cache` disables both behaviors.
+
+The cache stores the agent's **raw `Usage`** (the normalized windows), not the rendered
+snapshot. The snapshot — pace, work-day index, reset countdowns — is **recomputed from the cached
+usage on every call** against the current `budget` and `now`. So a fresh-cache hit still reflects
+the latest work-days setting and live countdowns (an earlier design that cached the *rendered*
+snapshot showed a stale work-day denominator for up to a TTL after the setting changed, and froze
+the countdowns at cache time). The core schema (`Usage`/`Window`/`Metric`/…) derives
+`Serialize`/`Deserialize` for this.
 
 **macOS integration.** The app's timer/launch polls use the default TTL; the manual **Refresh**
 button (and the right-click menu item) force a live fetch with `--cache-ttl 0`, which skips the
@@ -59,8 +65,10 @@ a "cached" marker when any displayed agent is stale.
 
 - **Rely only on the app's in-memory `lastGood`** — rejected: a fresh launch during an outage has
   no fallback; nothing persists across process restarts.
-- **Cache the raw provider response and recompute the snapshot** — would keep `resets_in_secs`
-  exact when serving stale, but needs the core types to be `Serialize`/`Deserialize`; not worth
-  the coupling for a sub-minute staleness window. Caching the rendered snapshot is simpler.
+- **Cache the rendered snapshot instead of raw usage** — simpler (no core `Serialize`), but it
+  bakes the work-days config and reset countdowns in at cache time: changing the work-days setting
+  showed a stale "day N/M" until the TTL expired, and countdowns froze. Rejected in favor of
+  caching raw `Usage` and recomputing, which makes the core types `Serialize`/`Deserialize` (a
+  small, clean addition) and keeps every render config- and time-correct.
 - **Back off polling on 429 instead of caching** — addresses hammering but not the "shows error"
   symptom, and the real spike came from launch-time fetches, not the 5-minute cadence.
