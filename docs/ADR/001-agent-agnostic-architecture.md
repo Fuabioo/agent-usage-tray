@@ -67,6 +67,10 @@ never special-cases an agent. This is the chief generalization over the old fixe
 
 ### 4. Pace, projection, and color in the core
 
+> **Superseded by [ADR-002](002-pace-and-work-day-model.md).** The weekly ratio thresholds and
+> UTC weekday counting below were replaced by today's-headroom bands (plus a surplus state) and a
+> local-timezone work-day model. Projection and session/pool coloring are unchanged.
+
 - **Weekly** → pace algorithm (ported verbatim, incl. weekday counting): ceiling =
   `work_day_index * daily_budget`; ratio `<0.75` green, `<1.0` yellow, else red.
 - **Session** → fixed thresholds (`≤50` / `≤80`).

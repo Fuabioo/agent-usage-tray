@@ -84,6 +84,7 @@ calls within `--cache-ttl` (default 60s) reuse the cached snapshot instead of re
 usage source — this keeps the app's frequent polling from tripping API rate limits. On a
 *transient* failure (rate limit, network) the last good snapshot is served instead of an error,
 marked `"stale": true`; auth/credential errors still surface. (`--status` always fetches live.)
+See [ADR-003](docs/ADR/003-caching-and-resilience.md).
 
 The JSON document is the stable contract the GUIs consume. On failure it still prints valid
 JSON with an `error` object and exits non-zero. Shape (success):
@@ -122,19 +123,36 @@ them, even though no built-in provider uses it yet):
   you're a full day or more ahead of pace (banked budget; rendered mint with a glow), green
   above half a day's headroom, yellow down to a quarter day, red at a quarter day or less. So
   being a full day under pace late in the week reads green (or surplus), not "approaching the
-  ceiling". Only Mon–Fri count when `work_days ≤ 5`.
+  ceiling". `work_day_index` is counted in your **local timezone** — each reset-aligned period is
+  attributed to the calendar day its working hours fall on, so a Monday-8pm reset makes Friday day
+  4 of 5 (next Monday is the 5th). See [ADR-002](docs/ADR/002-pace-and-work-day-model.md).
 - **Session** window: fixed thresholds (`≤50` green, `≤80` yellow, else red).
 - **Credit pool**: red if projected to deplete before reset (or `≥90%` used), yellow at `≥75%`,
   else green.
 
 ## macOS menu bar app
 
-`macos/AgentUsageMenuBar` is a menu-bar-only (`LSUIElement`) Swift app that bundles and spawns
-the `agent-usage` CLI. The menu bar shows one segment per agent — the agent's glyph plus
-`weekly · session %`, tinted by pace — and clicking it opens the dashboard popover ("Today's
-pace · Work day N of M", a ring gauge per agent, a burn-rate alert banner for any credit pool
-projected to run dry, per-agent detail rows, Refresh + a settings gear). Right-click for
-Refresh / Settings / Launch at Login / Quit.
+`macos/AgentUsageMenuBar` is a menu-bar-only (`LSUIElement`) Swift/AppKit + SwiftUI app that
+bundles and spawns the `agent-usage` CLI and renders its JSON. See
+[ADR-004](docs/ADR/004-macos-frontend.md) for the design.
+
+- **Menu bar** — one configurable indicator, agents separated by a divider and tinted by pace
+  (mint when in surplus). Display modes (Settings → "Menu bar shows"): *icon only* (color-coded
+  glyphs), *worst metric* (single highest %), *icon + worst*, *per-agent %*, *per-agent · both
+  windows* (`weekly · session`, the default), *only yellow/red* (hide on-track agents), and
+  *selected agent only*.
+- **Dashboard popup** — "Today's pace": a ring gauge per agent showing today's headroom
+  ("20% left", or "out ~Thu" for a depleting pool) and the agent's own work day (`day N/M`, since
+  agents renew on different days); a burn-rate alert banner for any pool projected to run dry; and
+  per-window rows showing each window's remaining plus its exact local reset moment ("resets Mon
+  Jun 15, 8:00 PM · in 3d 8h"). Footer shows last-updated (with a "cached" marker when serving
+  stale data), Refresh, and a settings gear.
+- **Settings** — display mode, appearance (System/Light/Dark), work days, and per-agent enable;
+  persisted in `UserDefaults`. Right-click the bar item for Refresh / Settings / Launch at Login /
+  Quit.
+
+Agent logos are committed vector PDFs (rendered from each agent's SVG with `macos/render-logos.sh`
+via headless Chrome) and tinted per pace, so glyphs stay crisp at any size.
 
 ```sh
 macos/build-app.sh                 # build CLI + app, assemble macos/build/AgentUsageMenuBar.app
@@ -142,8 +160,19 @@ open macos/build/AgentUsageMenuBar.app
 ```
 
 Requires the Swift toolchain (Xcode Command Line Tools) plus Rust. The app finds the CLI via
-`$AGENT_USAGE_BIN`, then its bundled `Resources/agent-usage`, then `PATH`. Settings (appearance,
-work-days budget, per-agent enable) persist in `UserDefaults`.
+`$AGENT_USAGE_BIN`, then its bundled `Resources/agent-usage`, then `PATH`.
+
+## Design docs
+
+Architecture decisions are recorded under [`docs/ADR/`](docs/ADR/):
+
+- [ADR-001](docs/ADR/001-agent-agnostic-architecture.md) — agent-agnostic architecture (workspace,
+  `Provider` trait, normalized schema, one JSON contract).
+- [ADR-002](docs/ADR/002-pace-and-work-day-model.md) — pace coloring (today's-headroom bands,
+  surplus) and the local-timezone work-day model.
+- [ADR-003](docs/ADR/003-caching-and-resilience.md) — per-agent snapshot cache and stale-on-error.
+- [ADR-004](docs/ADR/004-macos-frontend.md) — macOS frontend: consuming the CLI JSON, menu-bar
+  display modes, and vector-PDF logo rendering.
 
 ## Build & test
 
