@@ -89,11 +89,14 @@ impl Provider for Hyper {
                 label: self.label().to_string(),
                 source: self.source().to_string(),
             },
-            // No `burn_per_day`: the daily grant is a fixed contractual amount, not an
-            // observed consumption rate, so there is nothing meaningful to project.
-            // Label is a lowercase noun ("credits") to match the other windows' convention
-            // ("weekly", "session"), which the UI renders as "<label> left".
-            windows: vec![Window::pool("credits", total, remaining, None, Some(resets_at))],
+            // `total`/`remaining` carry the raw balance (250 daily grant + permanent surplus),
+            // but the percentage is measured against the daily grant via `with_budget`: spending
+            // beyond the day's 250 dips into the permanent surplus and reads as "extra usage"
+            // (over 100%). No `burn_per_day` — the grant is fixed, not an observed burn rate, so
+            // there is nothing to project. Label is a lowercase noun ("credits") to match the
+            // other windows' convention, which the UI renders as "<label> left".
+            windows: vec![Window::pool("credits", total, remaining, None, Some(resets_at))
+                .with_budget(DAILY as f64)],
         })
     }
 }

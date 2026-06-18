@@ -65,6 +65,12 @@ pub enum Metric {
         total: f64,
         remaining: f64,
         burn_per_day: Option<f64>,
+        /// The recurring allowance consumption is measured against (e.g. a daily recharge).
+        /// When set, `used_pct` divides the consumed amount by this rather than `total`, so the
+        /// part of `total` beyond `budget` is surplus that only counts as used once the
+        /// allowance is spent ("extra usage", which pushes `used_pct` past 100%). `None`
+        /// measures against the full pool.
+        budget: Option<f64>,
     },
 }
 
@@ -81,17 +87,22 @@ pub struct Window {
 
 impl Metric {
     /// Percent of the window consumed, regardless of how the agent measures it. For a pool,
-    /// this is derived from the remaining balance.
+    /// this is derived from the remaining balance — against the recurring `budget` if one is
+    /// set (so consuming surplus beyond it reads as over 100%), otherwise against `total`.
     pub fn used_pct(&self) -> f64 {
         match *self {
             Metric::Utilization { used_pct } => used_pct,
             Metric::Pool {
-                total, remaining, ..
+                total,
+                remaining,
+                budget,
+                ..
             } => {
-                if total <= 0.0 {
+                let basis = budget.unwrap_or(total);
+                if basis <= 0.0 {
                     0.0
                 } else {
-                    ((total - remaining) / total * 100.0).max(0.0)
+                    ((total - remaining) / basis * 100.0).max(0.0)
                 }
             }
         }
@@ -142,9 +153,20 @@ impl Window {
                 total,
                 remaining,
                 burn_per_day,
+                budget: None,
             },
             resets_at,
         }
+    }
+
+    /// Measure this pool's percentage against a recurring allowance (e.g. a daily recharge)
+    /// instead of the full `total`; the rest of `total` becomes surplus that only counts as
+    /// used once the allowance is spent. No-op on non-pool windows.
+    pub fn with_budget(mut self, budget: f64) -> Self {
+        if let Metric::Pool { budget: b, .. } = &mut self.metric {
+            *b = Some(budget);
+        }
+        self
     }
 }
 
@@ -172,6 +194,22 @@ mod tests {
         let w = Window::pool("empty", 0.0, 0.0, None, None);
         assert_eq!(w.used_pct(), 0.0);
         assert_eq!(w.remaining_pct(), 100.0);
+    }
+
+    #[test]
+    fn pool_budget_measures_against_allowance_not_total() {
+        // 1656 total (250 daily grant + 1406 surplus), 1620 left -> 36 of the 250 daily spent.
+        let w = Window::pool("credits", 1656.0, 1620.0, None, None).with_budget(250.0);
+        assert!((w.used_pct() - 14.4).abs() < 0.001);
+        assert!((w.remaining_pct() - 85.6).abs() < 0.001);
+    }
+
+    #[test]
+    fn pool_budget_beyond_allowance_is_extra_usage() {
+        // Spent 300 against a 250 daily grant -> 50 into the surplus: over 100% used, 0% left.
+        let w = Window::pool("credits", 1656.0, 1356.0, None, None).with_budget(250.0);
+        assert!(w.used_pct() > 100.0);
+        assert_eq!(w.remaining_pct(), 0.0);
     }
 
     #[test]

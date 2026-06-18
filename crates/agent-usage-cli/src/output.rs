@@ -137,6 +137,7 @@ fn build_window(window: &Window, budget: &Budget, now: DateTime<Utc>) -> WindowD
             total,
             remaining,
             burn_per_day,
+            ..
         } => {
             let proj = core::project(window, now);
             Some(PoolDto {
