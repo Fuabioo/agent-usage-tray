@@ -65,7 +65,7 @@ struct DashboardView: View {
 
     private var detailRows: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(displayAgents) { AgentDetail(snapshot: $0) }
+            ForEach(displayAgents) { AgentDetail(snapshot: $0, creditDisplay: settings.creditDisplay) }
         }
     }
 
@@ -205,6 +205,7 @@ private struct AgentRingView: View {
 /// "how much can I still use today"; these rows answer "how much of each window is left".
 private struct AgentDetail: View {
     let snapshot: AgentSnapshot
+    let creditDisplay: AppSettings.CreditDisplay
 
     /// Session first, then weekly, then anything else — a stable reading order across agents.
     private var orderedWindows: [WindowDTO] {
@@ -223,7 +224,7 @@ private struct AgentDetail: View {
                 Spacer(minLength: 0)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(orderedWindows, id: \.label) { WindowLine(window: $0) }
+                    ForEach(orderedWindows, id: \.label) { WindowLine(window: $0, creditDisplay: creditDisplay) }
                 }
             }
         }
@@ -235,16 +236,21 @@ private struct AgentDetail: View {
 /// countdown beneath it.
 private struct WindowLine: View {
     let window: WindowDTO
+    let creditDisplay: AppSettings.CreditDisplay
 
-    /// Credit pools read out the raw balance the API returns ("1,620 / 1,656"); utilization
-    /// windows read out remaining percentage.
+    /// Credit pools read out the raw balance the API returns ("1,620 / 1,656"), a remaining
+    /// percentage, or both, per the preference; utilization windows read out remaining percentage.
     private var isCredits: Bool { window.kind == "credits" }
     private var label: String { isCredits ? window.label : "\(window.label) left" }
     private var value: String {
-        if isCredits, let pool = window.pool {
-            return "\(formatCredits(pool.remaining)) / \(formatCredits(pool.total))"
+        let pct = "\(Int(window.remainingPct.rounded()))%"
+        guard isCredits, let pool = window.pool else { return pct }
+        let credits = "\(formatCredits(pool.remaining)) / \(formatCredits(pool.total))"
+        switch creditDisplay {
+        case .credits: return credits
+        case .percentage: return pct
+        case .both: return "\(credits) · \(pct)"
         }
-        return "\(Int(window.remainingPct.rounded()))%"
     }
 
     var body: some View {

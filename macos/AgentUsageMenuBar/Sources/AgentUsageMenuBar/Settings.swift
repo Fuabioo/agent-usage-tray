@@ -83,6 +83,26 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(selectedAgentID, forKey: Keys.selectedAgentID) }
     }
 
+    /// How credit-pool windows read out their balance (raw credits, percentage, or both).
+    enum CreditDisplay: String, CaseIterable, Identifiable {
+        case credits      // the raw balance the API returns, e.g. "1,620"
+        case percentage   // remaining percentage, e.g. "98%"
+        case both         // "1,620 · 98%"
+
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .credits: return "Hypercredits"
+            case .percentage: return "Percentage"
+            case .both: return "Both"
+            }
+        }
+    }
+
+    @Published var creditDisplay: CreditDisplay {
+        didSet { defaults.set(creditDisplay.rawValue, forKey: Keys.creditDisplay) }
+    }
+
     private let defaults: UserDefaults
 
     private enum Keys {
@@ -91,6 +111,7 @@ final class AppSettings: ObservableObject {
         static let disabledAgents = "disabledAgentIDs"
         static let menuBarMode = "menuBarMode"
         static let selectedAgentID = "selectedAgentID"
+        static let creditDisplay = "creditDisplay"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -103,6 +124,8 @@ final class AppSettings: ObservableObject {
         self.menuBarMode = MenuBarMode(rawValue: defaults.string(forKey: Keys.menuBarMode) ?? "")
             ?? .perAgentBoth
         self.selectedAgentID = defaults.string(forKey: Keys.selectedAgentID) ?? ""
+        self.creditDisplay = CreditDisplay(rawValue: defaults.string(forKey: Keys.creditDisplay) ?? "")
+            ?? .both
     }
 
     /// Expected percent consumed per work day, so a full week of work days totals 100%

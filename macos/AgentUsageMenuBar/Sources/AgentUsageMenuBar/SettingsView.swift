@@ -45,6 +45,22 @@ struct SettingsView: View {
 
             Divider()
 
+            row("Credits show") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("", selection: $settings.creditDisplay) {
+                        ForEach(AppSettings.CreditDisplay.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 260)
+                    Text("How credit pools like Hyper read out their balance.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Divider()
+
             row("Appearance") {
                 Picker("", selection: $settings.appearance) {
                     ForEach(AppSettings.Appearance.allCases) { Text($0.label).tag($0) }

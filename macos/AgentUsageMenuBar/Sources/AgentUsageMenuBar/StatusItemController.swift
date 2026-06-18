@@ -157,6 +157,7 @@ final class StatusItemController {
     private func renderBar(agents: [AgentSnapshot]) -> NSAttributedString {
         let font = Self.barFont
         let out = NSMutableAttributedString()
+        let credit = settings.creditDisplay
 
         switch settings.menuBarMode {
         case .iconOnly:
@@ -167,21 +168,21 @@ final class StatusItemController {
 
         case .worstMetric:
             if let (w, _) = Self.worstAcross(agents) {
-                out.append(Self.segment(Self.barValue(w), color: w.pace.nsColor, font: font))
+                out.append(Self.segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
             }
 
         case .iconWorst:
             if let (w, agent) = Self.worstAcross(agents) {
                 Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 1)
                 out.append(Self.segment(" ", color: .secondaryLabelColor, font: font))
-                out.append(Self.segment(Self.barValue(w), color: w.pace.nsColor, font: font))
+                out.append(Self.segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
             }
 
         case .perAgentPercent:
-            Self.appendPerAgent(out, agents: agents, font: font, both: false)
+            Self.appendPerAgent(out, agents: agents, font: font, both: false, credit: credit)
 
         case .perAgentBoth:
-            Self.appendPerAgent(out, agents: agents, font: font, both: true)
+            Self.appendPerAgent(out, agents: agents, font: font, both: true, credit: credit)
 
         case .onlyAttention:
             let attention = agents.filter { !$0.isError && $0.worstPace.needsAttention }
@@ -192,12 +193,12 @@ final class StatusItemController {
                     Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 3)
                 }
             } else {
-                Self.appendPerAgent(out, agents: attention, font: font, both: true)
+                Self.appendPerAgent(out, agents: attention, font: font, both: true, credit: credit)
             }
 
         case .selectedAgent:
             let agent = agents.first { $0.agent.id == settings.selectedAgentID } ?? agents.first
-            if let agent { Self.appendPerAgent(out, agents: [agent], font: font, both: true) }
+            if let agent { Self.appendPerAgent(out, agents: [agent], font: font, both: true, credit: credit) }
         }
         return out
     }
@@ -220,7 +221,8 @@ final class StatusItemController {
 
     /// Append each agent as `glyph weekly · session %` (both) or `glyph worst%`, divided.
     private static func appendPerAgent(
-        _ out: NSMutableAttributedString, agents: [AgentSnapshot], font: NSFont, both: Bool
+        _ out: NSMutableAttributedString, agents: [AgentSnapshot], font: NSFont, both: Bool,
+        credit: AppSettings.CreditDisplay
     ) {
         let sep = NSColor.secondaryLabelColor
         for (i, agent) in agents.enumerated() {
@@ -238,18 +240,25 @@ final class StatusItemController {
                 out.append(segment(" · ", color: sep, font: font))
                 out.append(segment(intPct(s.usedPct) + "%", color: s.pace.nsColor, font: font))
             } else if let w = worstWindow(agent) {
-                out.append(segment(Self.barValue(w), color: w.pace.nsColor, font: font))
+                out.append(segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
             }
         }
     }
 
-    /// The menu-bar reading for a window: a credit pool shows its raw remaining balance
-    /// (the number the credits API returns); every other window shows used percentage.
-    private static func barValue(_ w: WindowDTO) -> String {
-        if w.kind == "credits", let pool = w.pool {
-            return formatCredits(pool.remaining)
+    /// The menu-bar reading for a window. A credit pool reports its raw remaining balance
+    /// (the number the credits API returns), its remaining percentage, or both — per the
+    /// `credit` preference; every other window shows used percentage.
+    private static func barValue(_ w: WindowDTO, credit: AppSettings.CreditDisplay) -> String {
+        guard w.kind == "credits", let pool = w.pool else {
+            return intPct(w.usedPct) + "%"
         }
-        return intPct(w.usedPct) + "%"
+        let credits = formatCredits(pool.remaining)
+        let pct = intPct(w.remainingPct) + "%"
+        switch credit {
+        case .credits: return credits
+        case .percentage: return pct
+        case .both: return "\(credits) · \(pct)"
+        }
     }
 
     /// The window with the highest utilization for one agent.
