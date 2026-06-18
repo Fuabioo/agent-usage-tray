@@ -13,6 +13,7 @@
 //! core stays dependency-light and trivially testable.
 
 pub mod budget;
+pub mod cache;
 pub mod error;
 pub mod pace;
 pub mod projection;
@@ -21,6 +22,7 @@ pub mod schema;
 pub mod time;
 
 pub use budget::Budget;
+pub use cache::cache_dir;
 pub use error::UsageError;
 pub use pace::{
     compute_pool_color, compute_session_color, compute_weekly_pace_color, days_into_cycle,

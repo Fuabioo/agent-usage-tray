@@ -12,16 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-fn cache_dir() -> Option<PathBuf> {
-    if let Ok(x) = std::env::var("XDG_CACHE_HOME") {
-        if !x.is_empty() {
-            return Some(PathBuf::from(x).join("agent-usage"));
-        }
-    }
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".cache/agent-usage"))
-}
+use agent_usage_core::cache_dir;
 
 fn cache_path(id: &str) -> Option<PathBuf> {
     cache_dir().map(|d| d.join(format!("{id}.json")))

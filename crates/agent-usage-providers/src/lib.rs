@@ -10,15 +10,17 @@ mod http;
 
 pub mod claude;
 pub mod codex;
+pub mod hyper;
 
 use agent_usage_core::Provider;
 
 pub use claude::Claude;
 pub use codex::Codex;
+pub use hyper::Hyper;
 
 /// Every known provider, in display order. The CLI's `all` command iterates this.
 pub fn all() -> Vec<Box<dyn Provider>> {
-    vec![Box::new(Claude::new()), Box::new(Codex::new())]
+    vec![Box::new(Claude::new()), Box::new(Codex::new()), Box::new(Hyper::new())]
 }
 
 /// Look up a provider by its id (the CLI subcommand). Returns `None` for unknown ids.
@@ -36,10 +38,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_claude_and_codex() {
+    fn registry_has_claude_codex_and_hyper() {
         assert!(get("claude").is_some());
         assert!(get("codex").is_some());
+        assert!(get("hyper").is_some());
         assert!(get("nope").is_none());
-        assert_eq!(ids(), vec!["claude", "codex"]);
+        assert_eq!(ids(), vec!["claude", "codex", "hyper"]);
     }
 }
