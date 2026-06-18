@@ -183,6 +183,15 @@ func formatDuration(seconds: Int) -> String {
     }
 }
 
+/// Format a raw credit balance with thousands separators ("1,620") — the number a
+/// credits API reports, shown verbatim rather than as a percentage.
+func formatCredits(_ value: Double) -> String {
+    let f = NumberFormatter()
+    f.numberStyle = .decimal
+    f.maximumFractionDigits = 0
+    return f.string(from: NSNumber(value: value)) ?? String(Int(value.rounded()))
+}
+
 /// Short weekday like "Thu" for projection labels ("out ~Thu").
 func shortWeekday(_ date: Date) -> String {
     let f = DateFormatter()

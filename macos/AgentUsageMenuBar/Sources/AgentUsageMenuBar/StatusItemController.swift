@@ -167,14 +167,14 @@ final class StatusItemController {
 
         case .worstMetric:
             if let (w, _) = Self.worstAcross(agents) {
-                out.append(Self.segment(Self.intPct(w.usedPct) + "%", color: w.pace.nsColor, font: font))
+                out.append(Self.segment(Self.barValue(w), color: w.pace.nsColor, font: font))
             }
 
         case .iconWorst:
             if let (w, agent) = Self.worstAcross(agents) {
                 Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 1)
                 out.append(Self.segment(" ", color: .secondaryLabelColor, font: font))
-                out.append(Self.segment(Self.intPct(w.usedPct) + "%", color: w.pace.nsColor, font: font))
+                out.append(Self.segment(Self.barValue(w), color: w.pace.nsColor, font: font))
             }
 
         case .perAgentPercent:
@@ -202,9 +202,10 @@ final class StatusItemController {
         return out
     }
 
-    /// A faint vertical divider between agents.
+    /// A faint vertical divider between agents, padded with spaces so adjacent agents'
+    /// readings don't crowd the bar.
     private static func separator(_ font: NSFont) -> NSAttributedString {
-        segment(" │ ", color: .tertiaryLabelColor, font: font)
+        segment("  │  ", color: .tertiaryLabelColor, font: font)
     }
 
     /// Append a pace-tinted agent glyph (gold when the agent is in surplus, via displayPace).
@@ -237,9 +238,18 @@ final class StatusItemController {
                 out.append(segment(" · ", color: sep, font: font))
                 out.append(segment(intPct(s.usedPct) + "%", color: s.pace.nsColor, font: font))
             } else if let w = worstWindow(agent) {
-                out.append(segment(intPct(w.usedPct) + "%", color: w.pace.nsColor, font: font))
+                out.append(segment(Self.barValue(w), color: w.pace.nsColor, font: font))
             }
         }
+    }
+
+    /// The menu-bar reading for a window: a credit pool shows its raw remaining balance
+    /// (the number the credits API returns); every other window shows used percentage.
+    private static func barValue(_ w: WindowDTO) -> String {
+        if w.kind == "credits", let pool = w.pool {
+            return formatCredits(pool.remaining)
+        }
+        return intPct(w.usedPct) + "%"
     }
 
     /// The window with the highest utilization for one agent.

@@ -236,12 +236,23 @@ private struct AgentDetail: View {
 private struct WindowLine: View {
     let window: WindowDTO
 
+    /// Credit pools read out the raw balance the API returns ("1,620 / 1,656"); utilization
+    /// windows read out remaining percentage.
+    private var isCredits: Bool { window.kind == "credits" }
+    private var label: String { isCredits ? window.label : "\(window.label) left" }
+    private var value: String {
+        if isCredits, let pool = window.pool {
+            return "\(formatCredits(pool.remaining)) / \(formatCredits(pool.total))"
+        }
+        return "\(Int(window.remainingPct.rounded()))%"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 8) {
-                Text("\(window.label) left").foregroundStyle(.secondary)
+                Text(label).foregroundStyle(.secondary)
                 Spacer(minLength: 12)
-                Text("\(Int(window.remainingPct.rounded()))%")
+                Text(value)
                     .bold()
                     .foregroundStyle(window.pace.swiftUIColor)
             }

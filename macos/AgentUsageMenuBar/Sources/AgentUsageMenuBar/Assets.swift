@@ -16,7 +16,7 @@ enum AgentAssets {
         case "claude": return "sparkle"
         case "codex": return "chevron.left.forwardslash.chevron.right"
         case "antigravity": return "a.circle"
-        case "hyper": return "bolt.fill"
+        case "hyper": return "diamond.fill" // Crush renders hypercredits as ◆ (U+25C6)
         default: return "cpu"
         }
     }
