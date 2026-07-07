@@ -34,7 +34,7 @@ final class StatusItemController {
         popover.contentSize = NSSize(width: 380, height: 220)
 
         if let button = statusItem.button {
-            button.image = Self.placeholderImage()
+            button.image = placeholderImage()
             button.imagePosition = .imageOnly
             button.target = self
             button.action = #selector(handleClick(_:))
@@ -142,11 +142,11 @@ final class StatusItemController {
         guard let button = statusItem.button else { return }
         let agents = controller.merged.filter { settings.isEnabled($0.agent.id) }
         if agents.isEmpty {
-            button.image = controller.runtimeError == nil ? Self.placeholderImage() : Self.errorImage()
+            button.image = controller.runtimeError == nil ? placeholderImage() : errorImage()
             return
         }
         let out = renderBar(agents: agents)
-        button.image = out.length > 0 ? Self.render(out) : Self.placeholderImage()
+        button.image = out.length > 0 ? render(out) : placeholderImage()
     }
 
     // MARK: - Image drawing
@@ -279,14 +279,14 @@ final class StatusItemController {
 
     private static func intPct(_ v: Double) -> String { String(Int(v.rounded())) }
 
-    private static func errorImage() -> NSImage {
-        render(segment("⚠ agents", color: PaceColor.red.nsColor,
-                       font: .systemFont(ofSize: 12, weight: .medium)))
+    private func errorImage() -> NSImage {
+        render(Self.segment("⚠ agents", color: PaceColor.red.nsColor,
+                            font: .systemFont(ofSize: 12, weight: .medium)))
     }
 
-    private static func placeholderImage() -> NSImage {
-        render(segment("… agents", color: .secondaryLabelColor,
-                       font: .monospacedDigitSystemFont(ofSize: 12, weight: .medium)))
+    private func placeholderImage() -> NSImage {
+        render(Self.segment("… agents", color: .secondaryLabelColor,
+                            font: .monospacedDigitSystemFont(ofSize: 12, weight: .medium)))
     }
 
     private static func segment(_ s: String, color: NSColor, font: NSFont) -> NSAttributedString {
@@ -305,18 +305,27 @@ final class StatusItemController {
         return NSAttributedString(attachment: attachment)
     }
 
-    /// Build a non-template (colored) menu bar image via a drawing handler so AppKit re-draws it
-    /// in the button's current appearance (adaptive pace colors stay correct on Light/Dark toggle).
-    private static func render(_ attributed: NSAttributedString) -> NSImage {
+    /// Bake a non-template (colored) menu bar image eagerly into a bitmap on the main thread.
+    ///
+    /// We deliberately do NOT use a lazily `drawingHandler`-backed `NSImage` here: AppKit re-invokes
+    /// that handler at unpredictable times (menu bar redraws, Space switches, and occasionally off
+    /// the main thread), and an async `NSAttributedString.draw` can yield an empty frame — which
+    /// makes the status item blink out and reappear erratically. A static bitmap can't blank out.
+    /// Adaptive pace colors stay correct on Light/Dark toggle because `appearanceObservation`
+    /// re-runs `updateBar()` on every appearance change, re-baking under the new appearance below.
+    private func render(_ attributed: NSAttributedString) -> NSImage {
         let size = attributed.size()
         let height: CGFloat = 18
-        let imageSize = NSSize(width: ceil(size.width), height: height)
+        let imageSize = NSSize(width: max(1, ceil(size.width)), height: height)
+        let appearance = statusItem.button?.effectiveAppearance ?? NSAppearance.currentDrawing()
 
-        let image = NSImage(size: imageSize, flipped: false) { _ in
+        let image = NSImage(size: imageSize)
+        image.lockFocus()
+        appearance.performAsCurrentDrawingAppearance {
             let y = (height - size.height) / 2
             attributed.draw(at: NSPoint(x: 0, y: y))
-            return true
         }
+        image.unlockFocus()
         image.isTemplate = false
         return image
     }
