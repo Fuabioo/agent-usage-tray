@@ -46,6 +46,26 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     creds_path: Option<String>,
 
+    /// Config directory to resolve this account's default credentials under (supports `~`).
+    /// For Claude Code this reads `<DIR>/.credentials.json`, with the Keychain fallback still
+    /// applying — the mechanism for a second login (e.g. `~/.claude-personal`).
+    #[arg(long, value_name = "DIR")]
+    config_dir: Option<String>,
+
+    /// macOS: Keychain account (`security -a`) to disambiguate when one service holds an entry
+    /// per login. Omit for the single-account case.
+    #[arg(long, value_name = "ACCOUNT")]
+    keychain_account: Option<String>,
+
+    /// Override the emitted agent id (and its cache key) for this run. Lets one provider serve a
+    /// second account as a distinct agent downstream, e.g. `--id claude-personal`.
+    #[arg(long, value_name = "ID")]
+    id: Option<String>,
+
+    /// Override the emitted agent display label for this run (e.g. `--label "Claude (personal)"`).
+    #[arg(long, value_name = "LABEL")]
+    label: Option<String>,
+
     /// Expected usage percentage per work day (default 20.0).
     #[arg(long, value_name = "PCT")]
     daily_budget: Option<f64>,
@@ -113,25 +133,41 @@ fn run(cli: &Cli) -> i32 {
 /// app gets dedupe + stale-on-error resilience.
 fn run_one(cli: &Cli, provider: &dyn Provider, budget: &Budget) -> i32 {
     let now = Utc::now();
+    let id_ovr = cli.id.as_deref();
+    let label_ovr = cli.label.as_deref();
 
     if cli.status {
         let opts = fetch_options(cli);
         return match provider.fetch(&opts) {
-            Ok(usage) => {
+            Ok(mut usage) => {
+                apply_identity(&mut usage.agent, id_ovr, label_ovr);
                 print!("{}", output::render_status(&output::build_snapshot(&usage, budget, now), now));
                 0
             }
             Err(err) => {
-                let snap = output::build_error_snapshot(&agent_info(provider), &err, budget, now);
+                let mut info = agent_info(provider);
+                apply_identity(&mut info, id_ovr, label_ovr);
+                let snap = output::build_error_snapshot(&info, &err, budget, now);
                 eprint!("{}", output::render_status(&snap, now));
                 1
             }
         };
     }
 
-    let (value, code) = agent_json(cli, provider, budget, now);
+    let (value, code) = agent_json(cli, provider, budget, now, id_ovr, label_ovr);
     print_json(&value);
     code
+}
+
+/// Apply the CLI's `--id`/`--label` overrides to an agent identity, so one provider can serve a
+/// second account under a distinct id/label. `source` is left as the provider reports it.
+fn apply_identity(info: &mut AgentInfo, id: Option<&str>, label: Option<&str>) {
+    if let Some(id) = id {
+        info.id = id.to_string();
+    }
+    if let Some(label) = label {
+        info.label = label.to_string();
+    }
 }
 
 /// Fetch every known agent. JSON form is an array of snapshots; exits 1 if any agent errored.
@@ -157,7 +193,7 @@ fn run_all(cli: &Cli, budget: &Budget) -> i32 {
     let mut values = Vec::new();
     let mut any_err = false;
     for provider in agent_usage_providers::all() {
-        let (value, code) = agent_json(cli, provider.as_ref(), budget, now);
+        let (value, code) = agent_json(cli, provider.as_ref(), budget, now, None, None);
         if code != 0 {
             any_err = true;
         }
@@ -179,14 +215,24 @@ fn run_all(cli: &Cli, budget: &Budget) -> i32 {
 /// and live countdowns; only the underlying usage is reused to avoid re-hitting the source. On a
 /// transient fetch error the last cached usage is served, marked `stale`; otherwise an error
 /// snapshot is returned (exit code 1).
-fn agent_json(cli: &Cli, provider: &dyn Provider, budget: &Budget, now: chrono::DateTime<Utc>) -> (Value, i32) {
-    let id = provider.id();
+fn agent_json(
+    cli: &Cli,
+    provider: &dyn Provider,
+    budget: &Budget,
+    now: chrono::DateTime<Utc>,
+    id_override: Option<&str>,
+    label_override: Option<&str>,
+) -> (Value, i32) {
+    // An id override gives this account its own cache file, so a second Claude login doesn't
+    // clobber the primary's cached usage.
+    let cache_id = id_override.unwrap_or_else(|| provider.id());
     let use_cache = !cli.no_cache;
 
     // Fresh cache: recompute the snapshot from cached usage without touching the source.
     if use_cache && cli.cache_ttl > 0 {
-        if let Some((age, usage)) = read_cached_usage(id) {
+        if let Some((age, mut usage)) = read_cached_usage(cache_id) {
             if age < Duration::from_secs(cli.cache_ttl) {
+                apply_identity(&mut usage.agent, id_override, label_override);
                 let snap = output::build_snapshot(&usage, budget, now);
                 return (serde_json::to_value(&snap).unwrap_or(Value::Null), 0);
             }
@@ -195,9 +241,10 @@ fn agent_json(cli: &Cli, provider: &dyn Provider, budget: &Budget, now: chrono::
 
     let opts = fetch_options(cli);
     match provider.fetch(&opts) {
-        Ok(usage) => {
+        Ok(mut usage) => {
+            apply_identity(&mut usage.agent, id_override, label_override);
             if use_cache {
-                write_cached_usage(id, &usage);
+                write_cached_usage(cache_id, &usage);
             }
             let snap = output::build_snapshot(&usage, budget, now);
             (serde_json::to_value(&snap).unwrap_or(Value::Null), 0)
@@ -205,14 +252,17 @@ fn agent_json(cli: &Cli, provider: &dyn Provider, budget: &Budget, now: chrono::
         Err(err) => {
             // Serve last good usage on a transient failure, recomputed and marked stale.
             if use_cache && is_transient(&err) {
-                if let Some((_, usage)) = read_cached_usage(id) {
+                if let Some((_, mut usage)) = read_cached_usage(cache_id) {
+                    apply_identity(&mut usage.agent, id_override, label_override);
                     let mut snap = output::build_snapshot(&usage, budget, now);
                     snap.stale = Some(true);
                     snap.stale_reason = Some(err.to_string());
                     return (serde_json::to_value(&snap).unwrap_or(Value::Null), 0);
                 }
             }
-            let snap = output::build_error_snapshot(&agent_info(provider), &err, budget, now);
+            let mut info = agent_info(provider);
+            apply_identity(&mut info, id_override, label_override);
+            let snap = output::build_error_snapshot(&info, &err, budget, now);
             (serde_json::to_value(&snap).unwrap_or(Value::Null), 1)
         }
     }
@@ -276,8 +326,10 @@ fn print_list(human: bool) {
 fn fetch_options(cli: &Cli) -> FetchOptions {
     FetchOptions {
         creds_path: cli.creds_path.as_deref().map(expand_tilde),
+        creds_dir: cli.config_dir.as_deref().map(expand_tilde),
         timeout: Duration::from_secs(cli.timeout),
         keychain_service: cli.keychain_service.clone(),
+        keychain_account: cli.keychain_account.clone(),
         no_keychain: cli.no_keychain,
     }
 }
@@ -299,5 +351,36 @@ fn print_json<T: Serialize>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(s) => println!("{s}"),
         Err(e) => eprintln!("error: failed to serialize JSON: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info() -> AgentInfo {
+        AgentInfo {
+            id: "claude".into(),
+            label: "Claude Code".into(),
+            source: "Anthropic OAuth usage API".into(),
+        }
+    }
+
+    #[test]
+    fn identity_override_remaps_id_and_label_keeps_source() {
+        let mut i = info();
+        apply_identity(&mut i, Some("claude-personal"), Some("Claude (personal)"));
+        assert_eq!(i.id, "claude-personal");
+        assert_eq!(i.label, "Claude (personal)");
+        // Source is intrinsic to the provider and must survive an identity override.
+        assert_eq!(i.source, "Anthropic OAuth usage API");
+    }
+
+    #[test]
+    fn identity_override_is_noop_when_unset() {
+        let mut i = info();
+        apply_identity(&mut i, None, None);
+        assert_eq!(i.id, "claude");
+        assert_eq!(i.label, "Claude Code");
     }
 }

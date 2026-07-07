@@ -15,6 +15,9 @@ use crate::http;
 
 const API_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const DEFAULT_CREDS_PATH: &str = "~/.claude/.credentials.json";
+/// The credentials file's name inside a Claude Code config dir (`$CLAUDE_CONFIG_DIR`), used to
+/// locate a non-default account's token, e.g. `~/.claude-personal/.credentials.json`.
+const CREDS_FILE_NAME: &str = ".credentials.json";
 const DEFAULT_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 
 /// The Anthropic OAuth usage response (only the fields we use).
@@ -99,12 +102,18 @@ impl Provider for Claude {
 }
 
 /// Resolve the OAuth bearer token: explicit/default file first, macOS Keychain as fallback.
+///
+/// Account selection (for a second Claude Code login) rides on `FetchOptions`:
+/// - `creds_path` — an explicit file, authoritative (no Keychain fallback);
+/// - `creds_dir` — a config dir whose `.credentials.json` is the *default* file, with the Keychain
+///   fallback still applying (e.g. `~/.claude-personal`);
+/// - `keychain_account` — disambiguates the Keychain entry when one service holds several logins.
 fn resolve_token(opts: &FetchOptions) -> Result<String, UsageError> {
     let explicit = opts.creds_path.is_some();
-    let path: PathBuf = opts
-        .creds_path
-        .clone()
-        .unwrap_or_else(|| creds::expand_tilde(DEFAULT_CREDS_PATH));
+    let path: PathBuf = opts.creds_path.clone().unwrap_or_else(|| match &opts.creds_dir {
+        Some(dir) => dir.join(CREDS_FILE_NAME),
+        None => creds::expand_tilde(DEFAULT_CREDS_PATH),
+    });
 
     let file_result = creds::read_file(&path).and_then(|c| parse_token(&c));
 
@@ -121,7 +130,7 @@ fn resolve_token(opts: &FetchOptions) -> Result<String, UsageError> {
                 .keychain_service
                 .as_deref()
                 .unwrap_or(DEFAULT_KEYCHAIN_SERVICE);
-            match creds::read_keychain(service) {
+            match creds::read_keychain(service, opts.keychain_account.as_deref()) {
                 Ok(blob) => {
                     return if blob.starts_with('{') {
                         parse_token(&blob)

@@ -17,8 +17,24 @@ enum AgentAssets {
         case "codex": return "chevron.left.forwardslash.chevron.right"
         case "antigravity": return "a.circle"
         case "hyper": return "diamond.fill" // Crush renders hypercredits as ◆ (U+25C6)
-        default: return "cpu"
+        default:
+            // A secondary Claude login ("claude-…") gets a near-variant so it doesn't read as the
+            // primary account when no bundled logo is present.
+            return isSecondaryClaude(id) ? "sparkles" : "cpu"
         }
+    }
+
+    /// A configured extra Claude account renders as its own agent id, always "claude"-prefixed
+    /// (see `ClaudeAccount.makeID`). It shares the Claude-family artwork via a distinct variant so
+    /// two Claude accounts never show an identical glyph.
+    static func isSecondaryClaude(_ id: String) -> Bool {
+        id != "claude" && id.hasPrefix("claude")
+    }
+
+    /// The bundled-logo base name for an agent id: the primary Claude and every built-in map to
+    /// `<id>`, while any secondary Claude account maps to the derived `claude-alt` variant.
+    private static func logoBaseName(forID id: String) -> String {
+        isSecondaryClaude(id) ? "claude-alt" : id
     }
 
     /// The bundled template logo for an agent, or nil if none is shipped (use the SF Symbol).
@@ -33,7 +49,7 @@ enum AgentAssets {
         // A vector PDF (rendered from the SVG), loaded as a resolution-independent
         // NSPDFImageRep so the glyph stays crisp at any size. We tint it manually, so it is not
         // a template image.
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("\(id).pdf"),
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("\(logoBaseName(forID: id)).pdf"),
               let image = NSImage(contentsOf: url)
         else { return nil }
         image.isTemplate = false

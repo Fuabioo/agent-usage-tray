@@ -92,6 +92,14 @@ Pace is based on **today's headroom**, not cumulative ratio:
 - All providers support `--creds-path` override. Claude also supports `--no-keychain`/`--keychain-service` flags.
 - Credential helpers (`creds.rs`) use blocking file I/O and `security` CLI — no async.
 
+### Multiple Claude accounts (a second login as its own agent)
+A second Claude Code login (e.g. a personal account under `$CLAUDE_CONFIG_DIR=~/.claude-personal`) is surfaced as a **distinct agent**, not a mode of the first. Nothing about the `Provider` trait changes — the same `Claude` provider is invoked again with overrides:
+- `--config-dir <DIR>` resolves the *default* creds under `<DIR>/.credentials.json` (via `FetchOptions::creds_dir`), and — unlike `--creds-path` — **keeps the Keychain fallback** so a macOS account whose token lives only in the Keychain still resolves.
+- `--keychain-service <NAME>` overrides which Keychain service to read. **This is how accounts are separated on macOS:** Claude Code namespaces the token by config dir — the default `~/.claude` uses the bare service `Claude Code-credentials`, and every other dir uses that name plus a suffix that is the first 4 bytes of `SHA-256(absolute config dir)` (e.g. `~/.claude-personal` → `Claude Code-credentials-791fb149`). The macOS app derives this (CryptoKit) in `ClaudeAccount.resolvedKeychainService` and passes it; the CLI itself does no derivation.
+- `--keychain-account <ACCT>` maps to `security -a` (a further disambiguator when one service holds an entry per login). `read_keychain(service, account)` takes the optional account. Unused by the app but available to the standalone CLI.
+- `--id`/`--label` remap the emitted `agent.id`/`label` (and the **cache key**, so account #2 caches to `claude-personal.json`, not clobbering `claude.json`). `apply_identity()` in `cli/src/main.rs` does this; `source` is left as the provider reports it. Only the single-agent path applies overrides — `all` passes `None`.
+- **Each account must resolve a *different, valid* token** to show distinct numbers: the per-dir `.credentials.json` (Linux) or the config-dir-specific Keychain service (macOS, auto-derived). Like the primary, the CLI reads the *stored* access token and does not run Claude's refresh flow, so a stale token 401s until that account's `claude` next refreshes it.
+
 ### HTTP layer
 - Blocking `ureq` (no async runtime). All requests are synchronous one-shot calls.
 - `http::get()` maps HTTP status codes to `UsageError` variants: 401 → Unauthorized, 429 → RateLimited (honors Retry-After, capped at 300s), other non-2xx → UnexpectedStatus.
@@ -105,10 +113,11 @@ When a `Pool` carries a `budget` (set via `Window::with_budget()`), consumption 
 
 ### Swift app details
 - CLI binary resolution order: `$AGENT_USAGE_BIN` → `Bundle.resources/agent-usage` → sibling to the .app → `PATH` via `/usr/bin/env agent-usage`.
-- Settings persisted in `UserDefaults`: `workDays`, `appearance`, `disabledAgentIDs`, `menuBarMode`, `selectedAgentID`, `creditDisplay`.
+- Settings persisted in `UserDefaults`: `workDays`, `appearance`, `disabledAgentIDs`, `menuBarMode`, `selectedAgentID`, `creditDisplay`, `claudeAccounts` (JSON-encoded `[ClaudeAccount]`).
+- **Extra Claude accounts** (`ClaudeAccount`: stable `claude-…` id + label + config dir + optional keychain-service override; `resolvedKeychainService` derives the service from the config dir). `DataController.runCLI` runs the built-in `all`, then one `agent-usage claude --json --id … --label … --config-dir … --keychain-service …` per account, appending each single snapshot. A base-`all` spawn/decode failure is fatal; an individual account that fails to spawn/decode is skipped (a per-agent *error document* decodes fine and is kept). `ClaudeAccount.makeID` derives a unique, `claude`-prefixed id so the account renders with the Claude-family glyph and never collides with the primary `claude`.
 - `creditDisplay` controls how credit pools are rendered in the menu bar and dashboard: `.credits` (raw balance like "1,620"), `.percentage` (remaining %), or `.both` ("1,620 · 98%").
 - Pace colors are adaptive (light/dark variants) via `NSColor(name: dynamicProvider:)`.
-- Agent logos are vector PDFs under `Resources/agents/<id>.pdf`. Hyper's diamond glyph is bundled; other agents fall back to SF Symbols defined in `Assets.symbolName(forID:)`.
+- Agent logos are vector PDFs under `Resources/agents/<id>.pdf`. Hyper's diamond glyph is bundled; other agents fall back to SF Symbols defined in `Assets.symbolName(forID:)`. A secondary Claude account (`Assets.isSecondaryClaude`, any `claude`-prefixed id ≠ `claude`) maps to the derived `claude-alt` variant (the burst in a ring) so two Claude accounts never render an identical glyph.
 - The JSON decoder uses `.convertFromSnakeCase` and a custom ISO8601 with fractional seconds fallback.
 - `LSUIElement = YES` in Info.plist keeps it out of the Dock; `.accessory` activation policy is the runtime equivalent.
 

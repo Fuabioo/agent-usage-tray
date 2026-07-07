@@ -29,20 +29,33 @@ pub fn read_file(path: &Path) -> Result<String, UsageError> {
 
 /// Read a credentials value from the macOS login Keychain via the `security` tool.
 ///
-/// Returns the raw stored string (which may be JSON or a bare token); callers parse it.
+/// `account` disambiguates when one service holds several entries (one per login): it maps to
+/// `security`'s `-a` attribute. `None` matches the service's sole/first entry — the single-account
+/// case. Returns the raw stored string (which may be JSON or a bare token); callers parse it.
 #[cfg(target_os = "macos")]
-pub fn read_keychain(service: &str) -> Result<String, UsageError> {
+pub fn read_keychain(service: &str, account: Option<&str>) -> Result<String, UsageError> {
     use std::process::Command;
 
+    let mut args = vec!["find-generic-password", "-s", service];
+    if let Some(acct) = account {
+        args.push("-a");
+        args.push(acct);
+    }
+    args.push("-w");
+
     let output = Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", service, "-w"])
+        .args(&args)
         .output()
         .map_err(|e| UsageError::CredentialsRead(format!("could not run security: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let which = match account {
+            Some(acct) => format!("item '{service}' (account '{acct}')"),
+            None => format!("item '{service}'"),
+        };
         return Err(UsageError::CredentialsRead(format!(
-            "Keychain item '{service}' not found: {}",
+            "Keychain {which} not found: {}",
             stderr.trim()
         )));
     }

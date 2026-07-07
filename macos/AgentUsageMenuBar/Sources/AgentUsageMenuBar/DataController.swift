@@ -65,10 +65,12 @@ final class DataController: ObservableObject {
     func refresh(force: Bool = false) {
         let workDays = settings.workDays
         let dailyBudget = settings.dailyBudget
+        let accounts = settings.claudeAccounts
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let result = Self.runCLI(
-                decoder: self.decoder, workDays: workDays, dailyBudget: dailyBudget, bypassCache: force)
+                decoder: self.decoder, workDays: workDays, dailyBudget: dailyBudget,
+                bypassCache: force, claudeAccounts: accounts)
             DispatchQueue.main.async { self.apply(result) }
         }
     }
@@ -86,8 +88,31 @@ final class DataController: ObservableObject {
         }
     }
 
-    /// Run `agent-usage all --json --work-days N --daily-budget B` and decode the array.
+    /// Run the built-in agents (`agent-usage all`) plus one extra `agent-usage claude` per
+    /// configured account, and return the combined snapshot array. Extra accounts are appended
+    /// after the built-ins; a spawn/decode failure on the base run is fatal, but an individual
+    /// account that fails to spawn/decode is skipped (its per-agent error snapshot, if any,
+    /// decodes normally and is kept).
     private static func runCLI(
+        decoder: JSONDecoder, workDays: Int, dailyBudget: Double, bypassCache: Bool,
+        claudeAccounts: [ClaudeAccount]
+    ) -> Result<[AgentSnapshot], CLIError> {
+        let base = runAll(
+            decoder: decoder, workDays: workDays, dailyBudget: dailyBudget, bypassCache: bypassCache)
+        guard case .success(var snaps) = base else { return base }
+
+        for account in claudeAccounts {
+            if let snap = runClaudeAccount(
+                account, decoder: decoder, workDays: workDays, dailyBudget: dailyBudget,
+                bypassCache: bypassCache) {
+                snaps.append(snap)
+            }
+        }
+        return .success(snaps)
+    }
+
+    /// Run `agent-usage all --json --work-days N --daily-budget B` and decode the array.
+    private static func runAll(
         decoder: JSONDecoder, workDays: Int, dailyBudget: Double, bypassCache: Bool
     ) -> Result<[AgentSnapshot], CLIError> {
         let launch = resolveLaunch()
@@ -124,6 +149,49 @@ final class DataController: ObservableObject {
             return .failure(CLIError(
                 message: "could not decode agent-usage output: \(error.localizedDescription)\n\(raw)"))
         }
+    }
+
+    /// Run `agent-usage claude --json` for one extra account, overriding its identity and pointing
+    /// it at that account's config dir (and optional Keychain account). Returns the decoded
+    /// single-agent snapshot — including a per-agent error document — or nil if the process failed
+    /// to spawn or its output couldn't be decoded.
+    private static func runClaudeAccount(
+        _ account: ClaudeAccount, decoder: JSONDecoder, workDays: Int, dailyBudget: Double,
+        bypassCache: Bool
+    ) -> AgentSnapshot? {
+        let launch = resolveLaunch()
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launch.executable)
+        var args = launch.leadingArgs + [
+            "claude", "--json",
+            "--id", account.id,
+            "--label", account.label,
+            "--config-dir", account.configDir,
+            // On macOS the token lives in the Keychain under a config-dir-specific service; the CLI
+            // reads `<config-dir>/.credentials.json` first (Linux) and falls back to this service.
+            "--keychain-service", account.resolvedKeychainService,
+            "--work-days", String(workDays),
+            "--daily-budget", String(format: "%.4f", dailyBudget),
+        ]
+        if bypassCache { args += ["--cache-ttl", "0"] }
+        process.arguments = args
+
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        // `claude --json` emits a single snapshot object (valid JSON even on a per-agent error).
+        return try? decoder.decode(AgentSnapshot.self, from: data)
     }
 
     struct Launch {

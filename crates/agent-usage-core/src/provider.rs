@@ -18,10 +18,19 @@ use crate::schema::Usage;
 pub struct FetchOptions {
     /// Explicit path to a credentials file, overriding the provider's default location.
     pub creds_path: Option<PathBuf>,
+    /// A config directory to resolve the *default* credentials location under, for agents that
+    /// support multiple accounts (e.g. a second Claude Code login under `~/.claude-personal`).
+    /// Unlike `creds_path` this is not authoritative: the agent's Keychain fallback still
+    /// applies when the file is absent. Ignored when `creds_path` is set.
+    pub creds_dir: Option<PathBuf>,
     /// HTTP request timeout.
     pub timeout: Duration,
     /// macOS Keychain generic-password service to fall back to (providers that support it).
     pub keychain_service: Option<String>,
+    /// macOS Keychain generic-password *account* to disambiguate when one service holds an
+    /// entry per login (the `security -a` attribute). `None` matches the service's sole/first
+    /// entry.
+    pub keychain_account: Option<String>,
     /// When true, never consult the macOS Keychain.
     pub no_keychain: bool,
 }
@@ -30,8 +39,10 @@ impl Default for FetchOptions {
     fn default() -> Self {
         FetchOptions {
             creds_path: None,
+            creds_dir: None,
             timeout: Duration::from_secs(30),
             keychain_service: None,
+            keychain_account: None,
             no_keychain: false,
         }
     }
