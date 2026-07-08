@@ -10,6 +10,12 @@ Claude Code&nbsp;·&nbsp;Codex&nbsp;·&nbsp;and whatever comes next — from one
 
 </div>
 
+> [!WARNING]
+> **Super alpha.** This is an early, personal-use project under active development. Expect rough
+> edges, breaking changes without notice, and no stability, security, or support guarantees. There
+> are no packaged releases — you build from source (see [Install](#install)), and the macOS app is
+> ad-hoc signed, not notarized. Use at your own risk.
+
 This is the agent-agnostic successor to
 [`claude-code-usage-indicator`](https://github.com/Fuabioo/claude-code-usage-indicator): same
 pace-based coloring and dashboard ideas, generalized so that adding an agent is a small, isolated
