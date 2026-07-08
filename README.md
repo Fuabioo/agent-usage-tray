@@ -37,10 +37,10 @@ split, and which agents are enabled:
 | 2        | **macOS menu bar app**            | ✅ working — multi-agent bar + dashboard + settings |
 | 3        | Linux COSMIC panel applet         | ⏳ planned (Rust/libcosmic, links the core)       |
 
-The UI target is `Agent Usage Prototype (standalone).html`: a multi-agent menu bar (each agent
-shows `weekly·session %`, color-coded by pace) and a dashboard with per-agent ring gauges,
-burn-rate alerts ("out ~Thu at this rate"), and an agent list where each agent declares its
-own source ("via cc-usage CLI", "via local config", "via gcloud auth", …).
+The UI (see [Screenshots](#screenshots)) is a multi-agent menu bar — each agent shows
+`weekly·session %`, color-coded by pace — and a dashboard with per-agent ring gauges, burn-rate
+alerts ("out ~Thu at this rate"), and an agent list where each agent declares its own source
+("via cc-usage CLI", "via local config", "via gcloud auth", …).
 
 ## Architecture
 

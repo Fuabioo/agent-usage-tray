@@ -13,7 +13,7 @@
 monitor **Claude Code** usage. It works well, but its data model is Claude-specific (a fixed
 `seven_day` + `five_hour` response). We want one tool that monitors **any** coding agent —
 Claude, Codex, and others — with identical UI and CLI surface, while each agent keeps its own
-way of reporting usage. The `Agent Usage Prototype (standalone).html` design makes this explicit:
+way of reporting usage. The prototype design made this explicit:
 a multi-agent menu bar, per-agent dashboard gauges, and a settings list where each agent declares
 its own source ("via cc-usage CLI", "via local config", "via gcloud auth", "via hyper.charm.land").
 
