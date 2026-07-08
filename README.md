@@ -1,8 +1,14 @@
+<div align="center">
+
 # agent-usage-tray
 
-Monitor **every** coding agent's usage budget at a glance — Claude Code, Codex, and whatever
-comes next — from one place. A cross-platform **CLI** with a single output contract, plus a
-**macOS menu bar** app and a **Linux COSMIC** applet that consume it.
+### Monitor **every** coding agent's usage budget at a glance
+
+Claude Code&nbsp;·&nbsp;Codex&nbsp;·&nbsp;and whatever comes next — from one place.
+
+<sub>A cross-platform **CLI** with a single output contract, plus a **macOS menu bar** app and a **Linux COSMIC** applet that consume it.</sub>
+
+</div>
 
 This is the agent-agnostic successor to
 [`claude-code-usage-indicator`](https://github.com/Fuabioo/claude-code-usage-indicator): same
