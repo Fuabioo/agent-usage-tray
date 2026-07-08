@@ -62,4 +62,13 @@ pub trait Provider: Send + Sync {
 
     /// Fetch and normalize current usage for this agent.
     fn fetch(&self, opts: &FetchOptions) -> Result<Usage, UsageError>;
+
+    /// Whether this agent joins the default `all` sweep. Expected agents (Claude, Codex) return
+    /// `true` even when unconfigured, so they surface a "log in" error that nudges the user.
+    /// Opt-in agents override this to return `false` until their credentials are present, so a
+    /// fresh install isn't cluttered with an agent nobody set up. Direct lookup by id (the
+    /// per-agent subcommand) ignores this, so `agent-usage <id>` always works and errors clearly.
+    fn in_default_set(&self) -> bool {
+        true
+    }
 }

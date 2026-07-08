@@ -57,6 +57,13 @@ impl Provider for Hyper {
         "Hyper /v1/credits API"
     }
 
+    /// Hyper is opt-in: it only joins the default `all` sweep once `HYPER_API_KEY` is set, so a
+    /// fresh install shows just the agents most people have (Claude, Codex). `agent-usage hyper`
+    /// still resolves directly and reports a clear "HYPER_API_KEY not set" error when unset.
+    fn in_default_set(&self) -> bool {
+        std::env::var_os("HYPER_API_KEY").is_some()
+    }
+
     fn fetch(&self, opts: &FetchOptions) -> Result<Usage, UsageError> {
         let api_key = resolve_api_key()?;
         let now = chrono::Utc::now();

@@ -88,7 +88,7 @@ Pace is based on **today's headroom**, not cumulative ratio:
 ### Credential resolution
 - Claude: `~/.claude/.credentials.json` (JSON with `claudeAiOauth.accessToken`), falls back to macOS Keychain (`security find-generic-password -s "Claude Code-credentials" -w`).
 - Codex: `~/.codex/auth.json` (JSON with `tokens.access_token` and `tokens.account_id`).
-- Hyper: `HYPER_API_KEY` env var (required). Reset time from `HYPER_RESET_TIME` env var (`HH:MM` UTC, e.g. `20:18`; defaults to midnight UTC if unset, hard error if malformed).
+- Hyper: `HYPER_API_KEY` env var. It's an **opt-in agent** — `Provider::in_default_set` returns false until the var is set, so a fresh install's `all`/`list`/menu bar show just Claude + Codex (the setup most people have). Once the key is set, Hyper joins automatically. `agent-usage hyper` always resolves directly and reports a clear "HYPER_API_KEY not set" error when the var is absent. Reset time from `HYPER_RESET_TIME` env var (`HH:MM` UTC, e.g. `20:18`; defaults to midnight UTC if unset, hard error if malformed).
 - All providers support `--creds-path` override. Claude also supports `--no-keychain`/`--keychain-service` flags.
 - Credential helpers (`creds.rs`) use blocking file I/O and `security` CLI — no async.
 

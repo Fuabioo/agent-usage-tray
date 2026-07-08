@@ -3,8 +3,8 @@
 //! Usage:
 //!   agent-usage claude            # JSON snapshot for one agent (the default output)
 //!   agent-usage claude --status   # human-readable report
-//!   agent-usage all               # JSON array: every known agent
-//!   agent-usage list              # list available agents and their sources
+//!   agent-usage all               # JSON array: every default agent (opt-in agents join once configured)
+//!   agent-usage list              # list default agents and their sources
 //!
 //! The output shape is identical for every agent (see `output::Snapshot`); only the provider
 //! behind a given subcommand differs. On failure the CLI still prints a valid JSON document
@@ -29,8 +29,9 @@ use serde_json::Value;
     version
 )]
 struct Cli {
-    /// Which agent to query: an agent id (e.g. `claude`, `codex`), `all` for every known
-    /// agent, or `list` to list available agents.
+    /// Which agent to query: an agent id (e.g. `claude`, `codex`), `all` for every default
+    /// agent (opt-in agents like `hyper` join once their credentials are configured), or
+    /// `list` to list them. A specific id always works, even for an opt-in agent.
     #[arg(value_name = "AGENT")]
     agent: String,
 
@@ -170,14 +171,15 @@ fn apply_identity(info: &mut AgentInfo, id: Option<&str>, label: Option<&str>) {
     }
 }
 
-/// Fetch every known agent. JSON form is an array of snapshots; exits 1 if any agent errored.
+/// Fetch every default agent (opt-in agents join once configured; see `Provider::in_default_set`).
+/// JSON form is an array of snapshots; exits 1 if any agent errored.
 fn run_all(cli: &Cli, budget: &Budget) -> i32 {
     let now = Utc::now();
 
     if cli.status {
         let opts = fetch_options(cli);
         let mut any_err = false;
-        for provider in agent_usage_providers::all() {
+        for provider in agent_usage_providers::all().into_iter().filter(|p| p.in_default_set()) {
             let snap = match provider.fetch(&opts) {
                 Ok(usage) => output::build_snapshot(&usage, budget, now),
                 Err(err) => {
@@ -192,7 +194,7 @@ fn run_all(cli: &Cli, budget: &Budget) -> i32 {
 
     let mut values = Vec::new();
     let mut any_err = false;
-    for provider in agent_usage_providers::all() {
+    for provider in agent_usage_providers::all().into_iter().filter(|p| p.in_default_set()) {
         let (value, code) = agent_json(cli, provider.as_ref(), budget, now, None, None);
         if code != 0 {
             any_err = true;
@@ -307,6 +309,7 @@ struct AgentListEntry {
 fn print_list(human: bool) {
     let entries: Vec<AgentListEntry> = agent_usage_providers::all()
         .iter()
+        .filter(|p| p.in_default_set())
         .map(|p| AgentListEntry {
             id: p.id(),
             label: p.label(),

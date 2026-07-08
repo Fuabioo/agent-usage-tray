@@ -18,7 +18,9 @@ pub use claude::Claude;
 pub use codex::Codex;
 pub use hyper::Hyper;
 
-/// Every known provider, in display order. The CLI's `all` command iterates this.
+/// Every known provider, in display order. The CLI's `all`/`list` commands iterate this and then
+/// keep only the providers whose [`Provider::in_default_set`] is true (opt-in agents like Hyper
+/// stay out until configured); [`get`] resolves any id here regardless.
 pub fn all() -> Vec<Box<dyn Provider>> {
     vec![Box::new(Claude::new()), Box::new(Codex::new()), Box::new(Hyper::new())]
 }
