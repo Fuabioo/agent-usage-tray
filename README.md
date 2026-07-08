@@ -22,12 +22,12 @@ adds per-agent ring gauges, reset countdowns, and burn-rate context. _(This exam
 multi-account, power-user setup — Codex, an opt-in [Charm Hyper](https://hyper.charm.land) credit
 pool, and a second "Personal" Claude login. A fresh install shows just Claude Code + Codex.)_
 
-![Menu bar indicator and dashboard popover](docs/images/menu-bar-and-dashboard.png)
+![Menu bar indicator and dashboard popover](docs/images/menu-bar-and-dashboard.webp)
 
 Settings control what the menu bar shows, how credit pools read out, appearance, the work-day pace
 split, and which agents are enabled:
 
-![Settings window](docs/images/settings.png)
+![Settings window](docs/images/settings.webp)
 
 ## Install
 
