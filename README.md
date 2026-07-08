@@ -5,8 +5,23 @@ comes next — from one place. A cross-platform **CLI** with a single output con
 **macOS menu bar** app and a **Linux COSMIC** applet that consume it.
 
 This is the agent-agnostic successor to
-[`claude-code-usage-indicator`](../claude-code-usage-indicator): same pace-based coloring and
-dashboard ideas, generalized so that adding an agent is a small, isolated change.
+[`claude-code-usage-indicator`](https://github.com/Fuabioo/claude-code-usage-indicator): same
+pace-based coloring and dashboard ideas, generalized so that adding an agent is a small, isolated
+change.
+
+## Screenshots
+
+The menu bar shows each agent's `weekly · session %`, color-coded by pace; the dashboard popover
+adds per-agent ring gauges, reset countdowns, and burn-rate context. _(This example runs a
+multi-account, power-user setup — Codex, an opt-in [Charm Hyper](https://hyper.charm.land) credit
+pool, and a second "Personal" Claude login. A fresh install shows just Claude Code + Codex.)_
+
+![Menu bar indicator and dashboard popover](docs/images/menu-bar-and-dashboard.png)
+
+Settings control what the menu bar shows, how credit pools read out, appearance, the work-day pace
+split, and which agents are enabled:
+
+![Settings window](docs/images/settings.png)
 
 ## Status & roadmap
 
@@ -66,8 +81,9 @@ adds only `clap`.
 ```sh
 agent-usage claude            # JSON snapshot for one agent (default output)
 agent-usage claude --status   # human-readable report
-agent-usage all               # JSON array: every known agent
-agent-usage list              # list available agents and their sources
+agent-usage all               # JSON array: every default agent (Claude + Codex out of the box)
+agent-usage list              # list the default agents and their sources
+agent-usage hyper             # opt-in agent — works directly once HYPER_API_KEY is set
 
 # Common flags (same for every agent):
 agent-usage claude --creds-path /path/to/.credentials.json
