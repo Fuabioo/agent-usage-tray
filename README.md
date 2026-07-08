@@ -29,6 +29,35 @@ split, and which agents are enabled:
 
 ![Settings window](docs/images/settings.png)
 
+## Install
+
+No packaged release yet — build from source. It reads your existing Claude Code and Codex
+credentials automatically, so the default two agents need no configuration.
+
+**macOS menu bar app** — needs [Rust](https://rustup.rs) and the Xcode Command Line Tools
+(`xcode-select --install`):
+
+```sh
+git clone https://github.com/Fuabioo/agent-usage-tray.git
+cd agent-usage-tray
+macos/build-app.sh                       # builds the CLI + app → macos/build/AgentUsageMenuBar.app
+open macos/build/AgentUsageMenuBar.app   # adds the menu bar item
+```
+
+The app is ad-hoc signed (not notarized), so on first launch Gatekeeper blocks it: right-click
+the `.app` → **Open**, or clear the quarantine flag with
+`xattr -dr com.apple.quarantine macos/build/AgentUsageMenuBar.app`.
+
+**CLI only** — needs just Rust:
+
+```sh
+cargo install --path crates/agent-usage-cli   # puts `agent-usage` on your PATH
+agent-usage all --status                       # human-readable report for every default agent
+```
+
+To add the opt-in [Charm Hyper](https://hyper.charm.land) credit pool, set `HYPER_API_KEY`; it
+then joins `all` and the menu bar automatically. See [CLI](#cli) for the full surface.
+
 ## Status & roadmap
 
 | Priority | Component                         | State                                            |
@@ -208,4 +237,4 @@ Requires a Rust toolchain. (No `just`/Homebrew packaging yet — that lands late
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 Fabio Mora
