@@ -9,10 +9,16 @@
 //!   ChatGPT-Account-Id: <account_id>
 //! ```
 //!
-//! The response's `rate_limit.primary_window` is the rolling 5-hour window and `secondary_window`
-//! the weekly one (`used_percent`, `limit_window_seconds`, `reset_at`). This is live and current —
-//! unlike the session rollout logs (which only update when Codex runs and go stale), so it stays
-//! accurate even while you're actively using Codex. Confirmed against the live API.
+//! The response carries up to two windows under `rate_limit`, each with `used_percent`,
+//! `limit_window_seconds` and `reset_at`. This is live and current — unlike the session rollout
+//! logs (which only update when Codex runs and go stale), so it stays accurate even while you're
+//! actively using Codex. Confirmed against the live API.
+//!
+//! **The window slots are not stable.** `primary_window` once held a rolling 5-hour limit with the
+//! weekly one in `secondary_window`; plans that bill a single weekly quota now report *that* as
+//! `primary_window` and leave `secondary_window` null. So each window's role is derived from its
+//! `limit_window_seconds` (see [`window_kind`]) rather than from the slot it arrived in — the slot
+//! is only a fallback for the case where the API omits the length.
 
 use std::path::PathBuf;
 
@@ -24,6 +30,9 @@ use crate::http;
 
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const DEFAULT_AUTH_PATH: &str = "~/.codex/auth.json";
+
+const DAY_SECS: i64 = 86_400;
+const WEEK_SECS: i64 = 7 * DAY_SECS;
 
 // --- auth.json (only the fields we read) ---
 #[derive(Deserialize)]
@@ -119,31 +128,53 @@ impl Provider for Codex {
 
 fn windows_from(rl: RateLimit) -> Vec<Window> {
     let mut windows = Vec::new();
+    // The slot each window arrives in is only the fallback role; its length decides.
     if let Some(w) = rl.primary_window {
-        windows.push(window_from(WindowKind::Session, &w));
+        windows.push(window_from(&w, WindowKind::Session));
     }
     if let Some(w) = rl.secondary_window {
-        windows.push(window_from(WindowKind::Weekly, &w));
+        windows.push(window_from(&w, WindowKind::Weekly));
     }
     windows
 }
 
-fn window_from(kind: WindowKind, w: &RlWindow) -> Window {
+fn window_from(w: &RlWindow, slot_role: WindowKind) -> Window {
     let resets_at = w
         .reset_at
         .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0));
-    let label = match kind {
-        WindowKind::Weekly => "weekly".to_string(),
-        _ => window_label(w.limit_window_seconds),
-    };
-    Window::utilization(kind, label, w.used_percent, resets_at)
+    let kind = window_kind(w.limit_window_seconds, slot_role);
+    Window::utilization(
+        kind,
+        window_label(w.limit_window_seconds, kind),
+        w.used_percent,
+        resets_at,
+    )
 }
 
-/// Human label for the short window from its length: 18000 s -> "5h limit".
-fn window_label(secs: Option<i64>) -> String {
+/// The role a rate-limit window plays, taken from its **length** rather than the slot it arrived
+/// in. Anything a day or longer is a multi-day budget that has to be paced across the cycle;
+/// anything shorter is a short rolling window with fixed thresholds. `slot_role` applies only
+/// when the API omits `limit_window_seconds`.
+///
+/// Getting this wrong is not cosmetic: a weekly quota misread as a session window is colored by
+/// fixed thresholds instead of pace, so a week's budget spent on its first day still reads green.
+fn window_kind(secs: Option<i64>, slot_role: WindowKind) -> WindowKind {
     match secs {
+        Some(s) if s >= DAY_SECS => WindowKind::Weekly,
+        Some(s) if s > 0 => WindowKind::Session,
+        _ => slot_role,
+    }
+}
+
+/// Human label from a window's length: 18000 s -> "5h limit", 604800 s -> "weekly". Falls back to
+/// the window's role when the API omits the length.
+fn window_label(secs: Option<i64>, kind: WindowKind) -> String {
+    match secs {
+        Some(s) if s == WEEK_SECS => "weekly".to_string(),
+        Some(s) if s > 0 && s % DAY_SECS == 0 => format!("{}d limit", s / DAY_SECS),
         Some(s) if s > 0 && s % 3600 == 0 => format!("{}h limit", s / 3600),
         Some(s) if s > 0 && s % 60 == 0 => format!("{}m limit", s / 60),
+        _ if kind == WindowKind::Weekly => "weekly".to_string(),
         _ => "session".to_string(),
     }
 }
@@ -178,9 +209,25 @@ mod tests {
 
     #[test]
     fn window_label_formats() {
-        assert_eq!(window_label(Some(18000)), "5h limit"); // 5h
-        assert_eq!(window_label(Some(900)), "15m limit"); // 15m
-        assert_eq!(window_label(None), "session");
+        assert_eq!(window_label(Some(18000), WindowKind::Session), "5h limit");
+        assert_eq!(window_label(Some(900), WindowKind::Session), "15m limit");
+        assert_eq!(window_label(Some(604800), WindowKind::Weekly), "weekly");
+        assert_eq!(window_label(Some(3 * 86400), WindowKind::Weekly), "3d limit");
+        // No length reported: the slot's role names it.
+        assert_eq!(window_label(None, WindowKind::Session), "session");
+        assert_eq!(window_label(None, WindowKind::Weekly), "weekly");
+    }
+
+    #[test]
+    fn window_kind_comes_from_length_not_slot() {
+        // A weekly quota in the primary slot is still weekly.
+        assert_eq!(window_kind(Some(604800), WindowKind::Session), WindowKind::Weekly);
+        assert_eq!(window_kind(Some(86400), WindowKind::Session), WindowKind::Weekly);
+        // Under a day is a short rolling window wherever it arrives.
+        assert_eq!(window_kind(Some(18000), WindowKind::Weekly), WindowKind::Session);
+        // Only a missing length falls back to the slot.
+        assert_eq!(window_kind(None, WindowKind::Weekly), WindowKind::Weekly);
+        assert_eq!(window_kind(None, WindowKind::Session), WindowKind::Session);
     }
 
     #[test]
@@ -204,6 +251,31 @@ mod tests {
         assert_eq!(windows[1].kind, WindowKind::Weekly);
         assert_eq!(windows[1].label, "weekly");
         assert_eq!(windows[1].used_pct(), 22.0);
+    }
+
+    /// The single-weekly-quota shape: the 7-day window moved into `primary_window` and
+    /// `secondary_window` went null. It must still be paced as a weekly budget.
+    #[test]
+    fn parses_single_weekly_quota_response() {
+        let body = r#"{
+            "plan_type": "team",
+            "rate_limit": {
+                "allowed": true,
+                "primary_window": {"used_percent": 31, "limit_window_seconds": 604800, "reset_at": 1785768607},
+                "secondary_window": null
+            }
+        }"#;
+        let parsed: UsageResponse = serde_json::from_str(body).unwrap();
+        let windows = windows_from(parsed.rate_limit.unwrap());
+        assert_eq!(windows.len(), 1);
+        assert_eq!(
+            windows[0].kind,
+            WindowKind::Weekly,
+            "a 7-day quota in the primary slot must be paced, not read as a session"
+        );
+        assert_eq!(windows[0].label, "weekly");
+        assert_eq!(windows[0].used_pct(), 31.0);
+        assert!(windows[0].resets_at.is_some());
     }
 
     #[test]

@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The popover dashboard — reproduces the prototype: "Today's pace" header, a ring gauge per
-/// agent, a burn-rate alert banner for any credit pool projected to run dry, per-agent detail
-/// rows, and a footer with the last update, Refresh, and a settings gear.
+/// agent, alert banners for any credit pool projected to run dry or multi-day budget on course to
+/// be spent early, per-agent detail rows, and a footer with the last update, Refresh, and a
+/// settings gear.
 struct DashboardView: View {
     @ObservedObject var controller: DataController
     @ObservedObject var settings: AppSettings
@@ -21,6 +22,12 @@ struct DashboardView: View {
                 .filter { $0.pool?.depletesBeforeReset == true }
                 .map { (agent, $0) }
         }
+    }
+
+    /// Agents whose multi-day budget is on course to be spent before it resets — the warning that
+    /// stands in for a short window an agent no longer enforces.
+    private var burnAlerts: [AgentSnapshot] {
+        displayAgents.filter { !$0.isError && $0.burnsOutEarly }
     }
 
     var body: some View {
@@ -42,6 +49,8 @@ struct DashboardView: View {
                 ForEach(Array(depletionAlerts.enumerated()), id: \.offset) { _, item in
                     DepletionBanner(agent: item.agent, window: item.window)
                 }
+
+                ForEach(burnAlerts) { BurnRateBanner(agent: $0) }
 
                 Divider()
                 detailRows
@@ -225,6 +234,9 @@ private struct AgentDetail: View {
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(orderedWindows, id: \.label) { WindowLine(window: $0, creditDisplay: creditDisplay) }
+                    if let burst = snapshot.trend?.recent {
+                        BurstLine(burst: burst, burnPerDay: snapshot.trend?.burnPerDay)
+                    }
                 }
             }
         }
@@ -274,6 +286,76 @@ private struct WindowLine: View {
                 .foregroundStyle(.tertiary)
             }
         }
+    }
+}
+
+/// The short-horizon burst: how much of the multi-day budget went in the last few hours, with the
+/// observed daily rate beneath it. Reads as consumption ("12% in the last 5h") rather than as a
+/// remainder, because its point is the speed — the window it stands in for is the one that used
+/// to stop you mid-sitting.
+private struct BurstLine: View {
+    let burst: BurstDTO
+    let burnPerDay: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
+                Text("last \(formatDuration(seconds: burst.spanSecs))")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+                Text("\(Int(burst.usedPct.rounded()))% used")
+                    .bold()
+                    .foregroundStyle(burst.pace.swiftUIColor)
+            }
+            if let burn = burnPerDay {
+                Text("burning ≈\(Int(burn.rounded()))% of the cycle per day")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .help("How much of this agent's multi-day budget you've spent in the last "
+              + "\(formatDuration(seconds: burst.spanSecs)). Colored against one work day's "
+              + "allowance, so it warns on how fast you're going rather than on what's left.")
+    }
+}
+
+// MARK: - Burn-rate alert banner
+
+/// The multi-day equivalent of `DepletionBanner`: the budget isn't gone, but at the rate of the
+/// last day it will be — before it resets.
+private struct BurnRateBanner: View {
+    let agent: AgentSnapshot
+
+    private var title: String {
+        guard let out = agent.trend?.projectedExhaustion else {
+            return "\(agent.agent.label) — burning through the cycle early"
+        }
+        return "\(agent.agent.label) — weekly budget gone ~\(shortWeekday(out)) at this rate"
+    }
+
+    private var detail: String {
+        var parts: [String] = []
+        if let burn = agent.trend?.burnPerDay { parts.append("burning ≈\(Int(burn.rounded()))%/day") }
+        if let burst = agent.trend?.recent {
+            parts.append("\(Int(burst.usedPct.rounded()))% in the last \(formatDuration(seconds: burst.spanSecs))")
+        }
+        if let weekly = agent.window("weekly"), let secs = weekly.resetsInSecs, secs > 0 {
+            parts.append("resets in \(formatDuration(seconds: secs))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle().fill(PaceColor.red.swiftUIColor).frame(width: 8, height: 8).padding(.top, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.callout).bold().foregroundStyle(PaceColor.red.swiftUIColor)
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(PaceColor.red.swiftUIColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

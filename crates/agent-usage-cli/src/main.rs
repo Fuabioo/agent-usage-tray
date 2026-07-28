@@ -9,14 +9,21 @@
 //! The output shape is identical for every agent (see `output::Snapshot`); only the provider
 //! behind a given subcommand differs. On failure the CLI still prints a valid JSON document
 //! carrying an `error` object and exits non-zero, so GUI callers can always parse the result.
+//!
+//! Settings resolve **flag → environment → config file → built-in default**, so the config file
+//! (`~/.config/agent-usage/config.json`, see [`agent_usage_core::Config`]) is the CLI's own
+//! baseline while a frontend passing its settings as arguments keeps overriding it.
 
 mod cache;
+mod history;
 mod output;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agent_usage_core::{AgentInfo, Budget, FetchOptions, Provider, UsageError};
+use agent_usage_core::{
+    AgentInfo, Budget, Config, FetchOptions, Provider, Trend, Usage, UsageError, WindowKind,
+};
 use chrono::Utc;
 use clap::Parser;
 use serde::Serialize;
@@ -67,7 +74,8 @@ struct Cli {
     #[arg(long, value_name = "LABEL")]
     label: Option<String>,
 
-    /// Expected usage percentage per work day (default 20.0).
+    /// Expected usage percentage per work day. Defaults to one cycle split across `--work-days`
+    /// (5 work days -> 20.0).
     #[arg(long, value_name = "PCT")]
     daily_budget: Option<f64>,
 
@@ -87,6 +95,12 @@ struct Cli {
     #[arg(long)]
     no_keychain: bool,
 
+    /// When the daily cycle resets, for agents whose API doesn't report it (currently `hyper`).
+    /// `HH:MM` plus an optional zone — UTC when omitted, or `Z`, `local`, or `±HH:MM`
+    /// (e.g. `08:00 local`). Overrides `HYPER_RESET_TIME`.
+    #[arg(long, value_name = "HH:MM[ ZONE]")]
+    reset_time: Option<String>,
+
     /// Seconds a cached snapshot stays fresh: repeated calls within this window reuse it instead
     /// of re-hitting the usage source. 0 disables reuse (but still serves stale on error).
     #[arg(long, default_value_t = 60, value_name = "SECS")]
@@ -103,9 +117,19 @@ fn main() {
 }
 
 fn run(cli: &Cli) -> i32 {
+    // Read the config file first: it is the baseline every other source overrides. A broken one
+    // is fatal rather than silently ignored — see `Config::load`.
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return 2;
+        }
+    };
+
     let budget = Budget {
-        daily_budget: cli.daily_budget.unwrap_or(Budget::default().daily_budget),
-        work_days: cli.work_days.unwrap_or(Budget::default().work_days),
+        daily_budget: resolve_daily_budget(cli, &config),
+        work_days: resolve_work_days(cli, &config),
     }
     .validated();
 
@@ -114,9 +138,9 @@ fn run(cli: &Cli) -> i32 {
             print_list(cli.status);
             0
         }
-        "all" => run_all(cli, &budget),
+        "all" => run_all(cli, &budget, &config),
         id => match agent_usage_providers::get(id) {
-            Some(provider) => run_one(cli, provider.as_ref(), &budget),
+            Some(provider) => run_one(cli, provider.as_ref(), &budget, &config),
             None => {
                 eprintln!(
                     "error: unknown agent '{id}'. Known agents: {}. Try `agent-usage list`.",
@@ -132,17 +156,19 @@ fn run(cli: &Cli) -> i32 {
 ///
 /// `--status` always fetches live (humans can retry); JSON output goes through the cache so the
 /// app gets dedupe + stale-on-error resilience.
-fn run_one(cli: &Cli, provider: &dyn Provider, budget: &Budget) -> i32 {
+fn run_one(cli: &Cli, provider: &dyn Provider, budget: &Budget, config: &Config) -> i32 {
     let now = Utc::now();
     let id_ovr = cli.id.as_deref();
     let label_ovr = cli.label.as_deref();
 
     if cli.status {
-        let opts = fetch_options(cli);
+        let opts = fetch_options(cli, config);
         return match provider.fetch(&opts) {
             Ok(mut usage) => {
                 apply_identity(&mut usage.agent, id_ovr, label_ovr);
-                print!("{}", output::render_status(&output::build_snapshot(&usage, budget, now), now));
+                let trend = track_trend(cli, &usage.agent.id, &usage, now, true);
+                let snap = output::build_snapshot(&usage, budget, now).with_trend(trend, budget);
+                print!("{}", output::render_status(&snap, now));
                 0
             }
             Err(err) => {
@@ -155,7 +181,7 @@ fn run_one(cli: &Cli, provider: &dyn Provider, budget: &Budget) -> i32 {
         };
     }
 
-    let (value, code) = agent_json(cli, provider, budget, now, id_ovr, label_ovr);
+    let (value, code) = agent_json(cli, provider, budget, config, now, id_ovr, label_ovr);
     print_json(&value);
     code
 }
@@ -173,15 +199,18 @@ fn apply_identity(info: &mut AgentInfo, id: Option<&str>, label: Option<&str>) {
 
 /// Fetch every default agent (opt-in agents join once configured; see `Provider::in_default_set`).
 /// JSON form is an array of snapshots; exits 1 if any agent errored.
-fn run_all(cli: &Cli, budget: &Budget) -> i32 {
+fn run_all(cli: &Cli, budget: &Budget, config: &Config) -> i32 {
     let now = Utc::now();
 
     if cli.status {
-        let opts = fetch_options(cli);
+        let opts = fetch_options(cli, config);
         let mut any_err = false;
         for provider in agent_usage_providers::all().into_iter().filter(|p| p.in_default_set()) {
             let snap = match provider.fetch(&opts) {
-                Ok(usage) => output::build_snapshot(&usage, budget, now),
+                Ok(usage) => {
+                    let trend = track_trend(cli, &usage.agent.id, &usage, now, true);
+                    output::build_snapshot(&usage, budget, now).with_trend(trend, budget)
+                }
                 Err(err) => {
                     any_err = true;
                     output::build_error_snapshot(&agent_info(provider.as_ref()), &err, budget, now)
@@ -195,7 +224,7 @@ fn run_all(cli: &Cli, budget: &Budget) -> i32 {
     let mut values = Vec::new();
     let mut any_err = false;
     for provider in agent_usage_providers::all().into_iter().filter(|p| p.in_default_set()) {
-        let (value, code) = agent_json(cli, provider.as_ref(), budget, now, None, None);
+        let (value, code) = agent_json(cli, provider.as_ref(), budget, config, now, None, None);
         if code != 0 {
             any_err = true;
         }
@@ -221,6 +250,7 @@ fn agent_json(
     cli: &Cli,
     provider: &dyn Provider,
     budget: &Budget,
+    config: &Config,
     now: chrono::DateTime<Utc>,
     id_override: Option<&str>,
     label_override: Option<&str>,
@@ -231,24 +261,28 @@ fn agent_json(
     let use_cache = !cli.no_cache;
 
     // Fresh cache: recompute the snapshot from cached usage without touching the source.
+    // The trend is read but not appended to — a cache hit is the same reading as before, and
+    // recording it again would flatten the burn rate with samples that carry no new information.
     if use_cache && cli.cache_ttl > 0 {
         if let Some((age, mut usage)) = read_cached_usage(cache_id) {
             if age < Duration::from_secs(cli.cache_ttl) {
                 apply_identity(&mut usage.agent, id_override, label_override);
-                let snap = output::build_snapshot(&usage, budget, now);
+                let trend = track_trend(cli, cache_id, &usage, now, false);
+                let snap = output::build_snapshot(&usage, budget, now).with_trend(trend, budget);
                 return (serde_json::to_value(&snap).unwrap_or(Value::Null), 0);
             }
         }
     }
 
-    let opts = fetch_options(cli);
+    let opts = fetch_options(cli, config);
     match provider.fetch(&opts) {
         Ok(mut usage) => {
             apply_identity(&mut usage.agent, id_override, label_override);
             if use_cache {
                 write_cached_usage(cache_id, &usage);
             }
-            let snap = output::build_snapshot(&usage, budget, now);
+            let trend = track_trend(cli, cache_id, &usage, now, true);
+            let snap = output::build_snapshot(&usage, budget, now).with_trend(trend, budget);
             (serde_json::to_value(&snap).unwrap_or(Value::Null), 0)
         }
         Err(err) => {
@@ -256,7 +290,10 @@ fn agent_json(
             if use_cache && is_transient(&err) {
                 if let Some((_, mut usage)) = read_cached_usage(cache_id) {
                     apply_identity(&mut usage.agent, id_override, label_override);
-                    let mut snap = output::build_snapshot(&usage, budget, now);
+                    // Stale data is a repeat of an old reading, so it is read-only here too.
+                    let trend = track_trend(cli, cache_id, &usage, now, false);
+                    let mut snap =
+                        output::build_snapshot(&usage, budget, now).with_trend(trend, budget);
                     snap.stale = Some(true);
                     snap.stale_reason = Some(err.to_string());
                     return (serde_json::to_value(&snap).unwrap_or(Value::Null), 0);
@@ -268,6 +305,38 @@ fn agent_json(
             (serde_json::to_value(&snap).unwrap_or(Value::Null), 1)
         }
     }
+}
+
+/// Track an agent's multi-day window over time and report what the samples say about its pace.
+///
+/// Only multi-day windows are tracked: a short rolling window already brakes on its own, and it
+/// is the agents that bill *one* multi-day quota — with nothing stopping a single sitting from
+/// eating the whole cycle — that need burn rate and burst to be reconstructed from history.
+///
+/// `record` distinguishes a live reading (append it) from a replayed one (a cache hit or stale
+/// fallback: read the series, don't grow it). `--no-cache` opts out of the on-disk series
+/// entirely, so no trend is reported — consistent with it meaning "touch no state".
+fn track_trend(
+    cli: &Cli,
+    id: &str,
+    usage: &Usage,
+    now: chrono::DateTime<Utc>,
+    record: bool,
+) -> Option<Trend> {
+    if cli.no_cache {
+        return None;
+    }
+    let window = usage
+        .windows
+        .iter()
+        .find(|w| w.kind == WindowKind::Weekly)?;
+
+    let mut series = history::load(id);
+    if record {
+        series.record(now, window.used_pct());
+        history::store(id, &series);
+    }
+    series.trend(now, window.used_pct(), window.resets_at)
 }
 
 fn read_cached_usage(id: &str) -> Option<(Duration, agent_usage_core::Usage)> {
@@ -326,7 +395,56 @@ fn print_list(human: bool) {
     }
 }
 
-fn fetch_options(cli: &Cli) -> FetchOptions {
+/// Settings resolve **flag → environment → config file → built-in default**.
+///
+/// The config file is the baseline, so a frontend that passes its own settings as arguments keeps
+/// overriding it exactly as before. The environment sits between the two because it is the more
+/// specific, more ephemeral of the two ambient sources — and because that ordering preserves what
+/// an existing `HYPER_RESET_TIME` export already did.
+fn resolve_work_days(cli: &Cli, config: &Config) -> u8 {
+    cli.work_days
+        .or(config.work_days)
+        .unwrap_or(Budget::default().work_days)
+}
+
+/// Unspecified, the daily budget is **derived from the work days** — one cycle split evenly, the
+/// same `100 / work_days` the macOS app applies to its own slider. A flat default would silently
+/// under-budget any non-default split: `work_days = 4` at 20%/day only ever spends 80% of the
+/// cycle, so the pace ceiling never reaches the budget the user actually has. For the default of
+/// 5 work days this is 20.0, exactly as before.
+fn resolve_daily_budget(cli: &Cli, config: &Config) -> f64 {
+    if let Some(explicit) = cli.daily_budget.or(config.daily_budget) {
+        return explicit;
+    }
+    let work_days = resolve_work_days(cli, config).clamp(1, 7);
+    100.0 / work_days as f64
+}
+
+fn resolve_reset_time(cli: &Cli, config: &Config) -> Option<String> {
+    resolve_reset_time_from(
+        cli.reset_time.clone(),
+        std::env::var("HYPER_RESET_TIME").ok(),
+        config.reset_time.clone(),
+    )
+}
+
+/// Pure resolution from the three sources, so it can be tested without depending on (or mutating)
+/// process-global environment state — the same reason `core::cache::resolve_cache_dir` is split
+/// this way. Blank values are treated as absent at every level, so a frontend can pass an empty
+/// field through without it either erroring or shadowing the config file.
+fn resolve_reset_time_from(
+    flag: Option<String>,
+    env: Option<String>,
+    config: Option<String>,
+) -> Option<String> {
+    [flag, env, config]
+        .into_iter()
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .find(|s| !s.is_empty())
+}
+
+fn fetch_options(cli: &Cli, config: &Config) -> FetchOptions {
     FetchOptions {
         creds_path: cli.creds_path.as_deref().map(expand_tilde),
         creds_dir: cli.config_dir.as_deref().map(expand_tilde),
@@ -334,6 +452,7 @@ fn fetch_options(cli: &Cli) -> FetchOptions {
         keychain_service: cli.keychain_service.clone(),
         keychain_account: cli.keychain_account.clone(),
         no_keychain: cli.no_keychain,
+        reset_time: resolve_reset_time(cli, config),
     }
 }
 
@@ -385,5 +504,139 @@ mod tests {
         apply_identity(&mut i, None, None);
         assert_eq!(i.id, "claude");
         assert_eq!(i.label, "Claude Code");
+    }
+
+    fn cli_with(work_days: Option<u8>, daily_budget: Option<f64>, reset: Option<&str>) -> Cli {
+        Cli {
+            agent: "hyper".into(),
+            status: false,
+            json: true,
+            creds_path: None,
+            config_dir: None,
+            keychain_account: None,
+            id: None,
+            label: None,
+            daily_budget,
+            work_days,
+            timeout: 30,
+            keychain_service: None,
+            no_keychain: false,
+            reset_time: reset.map(str::to_string),
+            cache_ttl: 60,
+            no_cache: false,
+        }
+    }
+
+    fn config_with(work_days: Option<u8>, daily_budget: Option<f64>, reset: Option<&str>) -> Config {
+        Config {
+            work_days,
+            daily_budget,
+            reset_time: reset.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_flag_overrides_the_config_file() {
+        let cli = cli_with(Some(3), Some(33.0), None);
+        let config = config_with(Some(6), Some(16.0), None);
+        assert_eq!(resolve_work_days(&cli, &config), 3);
+        assert_eq!(resolve_daily_budget(&cli, &config), 33.0);
+    }
+
+    #[test]
+    fn the_config_file_applies_when_no_flag_is_given() {
+        let cli = cli_with(None, None, None);
+        let config = config_with(Some(6), Some(16.0), None);
+        assert_eq!(resolve_work_days(&cli, &config), 6);
+        assert_eq!(resolve_daily_budget(&cli, &config), 16.0);
+    }
+
+    #[test]
+    fn the_built_in_default_applies_when_neither_is_given() {
+        let cli = cli_with(None, None, None);
+        let config = Config::default();
+        assert_eq!(resolve_work_days(&cli, &config), Budget::default().work_days);
+        assert_eq!(
+            resolve_daily_budget(&cli, &config),
+            Budget::default().daily_budget,
+            "the 5-work-day default must still be 20%/day"
+        );
+    }
+
+    /// An unspecified daily budget follows the work-day split rather than staying flat —
+    /// otherwise a 4-day week silently budgets only 80% of the cycle.
+    #[test]
+    fn an_unset_daily_budget_is_derived_from_the_work_days() {
+        assert_eq!(
+            resolve_daily_budget(&cli_with(Some(4), None, None), &Config::default()),
+            25.0
+        );
+        assert_eq!(
+            resolve_daily_budget(&cli_with(None, None, None), &config_with(Some(4), None, None)),
+            25.0
+        );
+        // Every split spends exactly one cycle.
+        for days in 1u8..=7 {
+            let got = resolve_daily_budget(&cli_with(Some(days), None, None), &Config::default());
+            assert!((got * days as f64 - 100.0).abs() < 1e-9, "{days} days -> {got}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_daily_budget_still_wins_over_the_derivation() {
+        assert_eq!(
+            resolve_daily_budget(&cli_with(Some(4), Some(33.0), None), &Config::default()),
+            33.0
+        );
+        assert_eq!(
+            resolve_daily_budget(&cli_with(Some(4), None, None), &config_with(None, Some(15.0), None)),
+            15.0
+        );
+    }
+
+    /// The frontend's job: an explicit argument must win over everything ambient.
+    #[test]
+    fn a_reset_time_flag_overrides_env_and_config() {
+        assert_eq!(
+            resolve_reset_time_from(
+                Some("09:30Z".into()),
+                Some("20:18".into()),
+                Some("08:00 local".into())
+            )
+            .as_deref(),
+            Some("09:30Z")
+        );
+    }
+
+    #[test]
+    fn a_reset_time_env_var_overrides_the_config_file() {
+        assert_eq!(
+            resolve_reset_time_from(None, Some("20:18".into()), Some("08:00 local".into()))
+                .as_deref(),
+            Some("20:18")
+        );
+    }
+
+    #[test]
+    fn a_reset_time_falls_back_to_the_config_file() {
+        assert_eq!(
+            resolve_reset_time_from(None, None, Some("08:00 local".into())).as_deref(),
+            Some("08:00 local")
+        );
+    }
+
+    /// A GUI passing an empty field through must not shadow the next source down, nor error.
+    #[test]
+    fn a_blank_reset_time_is_treated_as_absent() {
+        assert_eq!(
+            resolve_reset_time_from(
+                Some("   ".into()),
+                Some(String::new()),
+                Some("08:00 local".into())
+            )
+            .as_deref(),
+            Some("08:00 local")
+        );
+        assert_eq!(resolve_reset_time_from(None, None, None), None);
     }
 }

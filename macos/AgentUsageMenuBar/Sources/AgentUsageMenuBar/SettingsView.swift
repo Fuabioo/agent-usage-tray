@@ -67,6 +67,10 @@ struct SettingsView: View {
 
             Divider()
 
+            row("Credits reset") { creditsResetField }
+
+            Divider()
+
             row("Appearance") {
                 Picker("", selection: $settings.appearance) {
                     ForEach(AppSettings.Appearance.allCases) { Text($0.label).tag($0) }
@@ -208,6 +212,50 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// When Hyper's daily credits refresh. Its API reports only a balance — no reset instant — so
+    /// this is the one thing the app has to be told. It lives here rather than in
+    /// `HYPER_RESET_TIME` because an app launched from Finder inherits no shell profile, so a
+    /// shell export never reaches it.
+    private var creditsResetField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("08:00 local", text: $settings.hyperResetTime)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+            Text("Time of day your credits refresh — `HH:MM`, optionally with a zone: "
+                 + "`local`, `Z`, or `±HH:MM`. A bare time means UTC.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            creditsResetFeedback
+        }
+    }
+
+    /// Echo back what the CLI actually made of the value — the resolved next reset, or its parse
+    /// error. Rather than re-implementing the parser in Swift (two grammars that would drift),
+    /// this reads the result out of the snapshot the CLI just returned.
+    ///
+    /// Reads `agents`, not `merged`: the stale fallback substitutes the last *good* reading for an
+    /// agent that errored, which is right for the dashboard but would silently swallow the parse
+    /// error for the very field being edited.
+    @ViewBuilder
+    private var creditsResetFeedback: some View {
+        if let hyper = controller.agents.first(where: { $0.agent.id == "hyper" }) {
+            if let error = hyper.error {
+                Text(error.message)
+                    .font(.caption)
+                    .foregroundStyle(PaceColor.red.swiftUIColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let reset = hyper.window("credits")?.resetsAt {
+                Text("Next refresh \(localResetString(reset))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else if settings.hyperResetTime.isEmpty {
+            Text("Unset — falls back to HYPER_RESET_TIME, then midnight UTC.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     @ViewBuilder

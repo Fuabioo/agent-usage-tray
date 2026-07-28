@@ -104,6 +104,14 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(creditDisplay.rawValue, forKey: Keys.creditDisplay) }
     }
 
+    /// When Hyper's daily credits refresh. Hyper's API reports only a balance — no reset — so this
+    /// has to be told to us. Owned here rather than left to `HYPER_RESET_TIME` because an app
+    /// launched from Finder inherits no shell profile, so a shell export is invisible to it.
+    /// Empty means "fall back to the environment variable" (and then to midnight UTC).
+    @Published var hyperResetTime: String {
+        didSet { defaults.set(hyperResetTime, forKey: Keys.hyperResetTime) }
+    }
+
     /// Additional Claude Code logins to monitor alongside the primary account, each shown as its
     /// own agent (own id, glyph, and menu-bar segment). The app runs one extra `agent-usage claude`
     /// per account with `--id`/`--label`/`--config-dir` overrides so each resolves *its own* token.
@@ -121,6 +129,7 @@ final class AppSettings: ObservableObject {
         static let selectedAgentID = "selectedAgentID"
         static let creditDisplay = "creditDisplay"
         static let claudeAccounts = "claudeAccounts"
+        static let hyperResetTime = "hyperResetTime"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -135,6 +144,7 @@ final class AppSettings: ObservableObject {
         self.selectedAgentID = defaults.string(forKey: Keys.selectedAgentID) ?? ""
         self.creditDisplay = CreditDisplay(rawValue: defaults.string(forKey: Keys.creditDisplay) ?? "")
             ?? .both
+        self.hyperResetTime = defaults.string(forKey: Keys.hyperResetTime) ?? ""
         self.claudeAccounts = Self.loadClaudeAccounts(defaults)
     }
 

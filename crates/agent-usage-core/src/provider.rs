@@ -33,6 +33,11 @@ pub struct FetchOptions {
     pub keychain_account: Option<String>,
     /// When true, never consult the macOS Keychain.
     pub no_keychain: bool,
+    /// When an agent's daily cycle resets, for the agents whose API doesn't report it (currently
+    /// Hyper, whose `/v1/credits` returns only a balance). `HH:MM` with an optional zone — see
+    /// the Hyper provider. Takes precedence over whatever environment variable the provider would
+    /// otherwise read, so a GUI can own the setting instead of requiring a shell export.
+    pub reset_time: Option<String>,
 }
 
 impl Default for FetchOptions {
@@ -44,6 +49,7 @@ impl Default for FetchOptions {
             keychain_service: None,
             keychain_account: None,
             no_keychain: false,
+            reset_time: None,
         }
     }
 }

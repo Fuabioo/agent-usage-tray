@@ -2,11 +2,13 @@
 //!
 //! A frontend (or a human) gets the same JSON document whether it asks about Claude, Codex, or
 //! any future agent: an `agent` block, the pace `config`, a flat `windows` array, an optional
-//! weekly `pace` summary, and an `error` that is null on success. Per-window color and
-//! credit-pool projection are computed here so consumers never re-derive them.
+//! weekly `pace` summary, an optional `trend`, and an `error` that is null on success. Per-window
+//! color, credit-pool projection and trend coloring are computed here so consumers never re-derive
+//! them.
 
 use agent_usage_core::{
-    self as core, AgentInfo, Budget, Metric, PaceColor, Usage, UsageError, Window, WindowKind,
+    self as core, AgentInfo, Budget, Metric, PaceColor, Trend, Usage, UsageError, Window,
+    WindowKind,
 };
 use chrono::{DateTime, Local, Utc};
 use serde::Serialize;
@@ -20,6 +22,9 @@ pub struct Snapshot {
     pub windows: Vec<WindowDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pace: Option<PaceSummaryDto>,
+    /// How fast the multi-day window is being consumed. Absent until enough samples accumulate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trend: Option<TrendDto>,
     /// Set when served from cache after a transient fetch failure (last good data).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale: Option<bool>,
@@ -76,6 +81,40 @@ pub struct PaceSummaryDto {
     /// `ceiling - weekly used`. Negative means over today's budget.
     pub remaining: f64,
     pub reset_day_local: String,
+}
+
+/// How fast a multi-day window is being consumed, derived from sampled history.
+///
+/// This is what replaces a short rolling window for agents that bill one multi-day quota: `pace`
+/// says whether you are ahead of today's ceiling, `trend` says how fast you are moving and when
+/// the cycle runs out at that speed.
+#[derive(Debug, Serialize)]
+pub struct TrendDto {
+    /// Percent of the cycle consumed per day at the recently observed rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub burn_per_day: Option<f64>,
+    /// Span the burn rate was measured over — shorter than a day while history is young.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured_over_secs: Option<i64>,
+    /// When the window hits 100% at that rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projected_exhaustion: Option<DateTime<Utc>>,
+    /// True when exhaustion is projected before the window would have reset — i.e. you are on
+    /// course to spend the whole cycle early.
+    pub exhausts_before_reset: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recent: Option<BurstDto>,
+}
+
+/// The short-horizon brake: how much of the multi-day budget went in the last few hours.
+#[derive(Debug, Serialize)]
+pub struct BurstDto {
+    /// Percent of the whole cycle consumed inside `span_secs` — not a percentage of the span.
+    pub used_pct: f64,
+    /// Span actually covered by samples; below the nominal burst window while history is young.
+    pub span_secs: i64,
+    /// Colored against one work day's budget, so it warns on speed rather than on what's left.
+    pub pace: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -194,9 +233,30 @@ pub fn build_snapshot(usage: &Usage, budget: &Budget, now: DateTime<Utc>) -> Sna
         config: ConfigDto::from_budget(budget),
         windows,
         pace,
+        trend: None,
         stale: None,
         stale_reason: None,
         error: None,
+    }
+}
+
+impl Snapshot {
+    /// Attach a sampled trend, coloring its burst against the snapshot's own daily budget.
+    /// Kept separate from [`build_snapshot`] because the trend comes from persisted history,
+    /// which is the caller's concern — a snapshot is buildable without ever touching disk.
+    pub fn with_trend(mut self, trend: Option<Trend>, budget: &Budget) -> Self {
+        self.trend = trend.map(|t| TrendDto {
+            burn_per_day: t.burn_per_day,
+            measured_over_secs: t.measured_over.map(|d| d.num_seconds()),
+            projected_exhaustion: t.exhausts_at,
+            exhausts_before_reset: t.exhausts_before_reset,
+            recent: t.recent.map(|b| BurstDto {
+                used_pct: b.used_pct,
+                span_secs: b.span.num_seconds(),
+                pace: core::compute_burst_color(b.used_pct, budget.daily_budget).tag(),
+            }),
+        });
+        self
     }
 }
 
@@ -213,6 +273,7 @@ pub fn build_error_snapshot(
         config: ConfigDto::from_budget(budget),
         windows: Vec::new(),
         pace: None,
+        trend: None,
         stale: None,
         stale_reason: None,
         error: Some(ErrorDto {
@@ -245,6 +306,37 @@ pub fn render_status(snap: &Snapshot, now: DateTime<Utc>) -> String {
         out.push_str(&format!("  resets       = {}\n", p.reset_day_local));
     }
     out.push('\n');
+
+    if let Some(t) = &snap.trend {
+        out.push_str("[Trend]\n");
+        if let (Some(burn), Some(over)) = (t.burn_per_day, t.measured_over_secs) {
+            out.push_str(&format!(
+                "  burn        = {:.1}%/day  (over the last {})\n",
+                burn,
+                core::format_duration(chrono::Duration::seconds(over))
+            ));
+        }
+        if let Some(exhausts) = t.projected_exhaustion {
+            out.push_str(&format!(
+                "  projected   = exhausted {} ({})\n",
+                core::reset_day_name(exhausts),
+                if t.exhausts_before_reset {
+                    "BEFORE reset"
+                } else {
+                    "after reset"
+                }
+            ));
+        }
+        if let Some(b) = &t.recent {
+            out.push_str(&format!(
+                "  burst       = {:.1}% of the cycle in the last {}  [{}]\n",
+                b.used_pct,
+                core::format_duration(chrono::Duration::seconds(b.span_secs)),
+                b.pace
+            ));
+        }
+        out.push('\n');
+    }
 
     for w in &snap.windows {
         out.push_str(&format!("[{} · {}]\n", w.kind, w.label));
@@ -342,6 +434,58 @@ mod tests {
         assert!(pool.depletes_before_reset);
         // 87.8% used + depleting -> red.
         assert_eq!(snap.windows[0].pace, "red");
+    }
+
+    #[test]
+    fn snapshot_without_a_trend_omits_the_key() {
+        let snap = build_snapshot(&claude_usage(), &Budget::default(), now()).with_trend(None, &Budget::default());
+        let json = serde_json::to_value(&snap).unwrap();
+        assert!(
+            json.get("trend").is_none(),
+            "a frontend must be able to tell 'no history yet' from 'not burning'"
+        );
+    }
+
+    #[test]
+    fn trend_carries_burn_projection_and_a_colored_burst() {
+        let budget = Budget::default(); // 20% per work day
+        let trend = agent_usage_core::Trend {
+            burn_per_day: Some(48.0),
+            measured_over: Some(chrono::Duration::hours(24)),
+            exhausts_at: Some(now() + chrono::Duration::hours(30)),
+            exhausts_before_reset: true,
+            recent: Some(agent_usage_core::Burst {
+                used_pct: 22.0,
+                span: chrono::Duration::hours(5),
+            }),
+        };
+        let snap = build_snapshot(&claude_usage(), &budget, now()).with_trend(Some(trend), &budget);
+        let t = snap.trend.as_ref().unwrap();
+        assert_eq!(t.burn_per_day, Some(48.0));
+        assert_eq!(t.measured_over_secs, Some(86_400));
+        assert!(t.exhausts_before_reset);
+        let burst = t.recent.as_ref().unwrap();
+        assert_eq!(burst.span_secs, 18_000);
+        // A whole work day's budget inside five hours is the brake tripping.
+        assert_eq!(burst.pace, "red");
+    }
+
+    /// The burst is colored against the *configured* day, so a 7-work-day split warns earlier.
+    #[test]
+    fn burst_color_follows_the_configured_work_days() {
+        let budget = Budget { daily_budget: 100.0 / 7.0, work_days: 7 };
+        let trend = agent_usage_core::Trend {
+            burn_per_day: None,
+            measured_over: None,
+            exhausts_at: None,
+            exhausts_before_reset: false,
+            recent: Some(agent_usage_core::Burst {
+                used_pct: 15.0,
+                span: chrono::Duration::hours(5),
+            }),
+        };
+        let snap = build_snapshot(&claude_usage(), &budget, now()).with_trend(Some(trend), &budget);
+        assert_eq!(snap.trend.unwrap().recent.unwrap().pace, "red");
     }
 
     #[test]

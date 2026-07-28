@@ -39,6 +39,16 @@ final class DataController: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
+
+        // Same for Hyper's reset time, debounced: it's typed a character at a time, and every
+        // intermediate value ("0", "08", "08:") would otherwise spawn a CLI run and flash a
+        // parse error. `force` bypasses the cache so the new reset takes effect immediately.
+        settings.$hyperResetTime
+            .dropFirst()
+            .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.refresh(force: true) }
+            .store(in: &cancellables)
     }
 
     /// Latest agents with a per-agent stale fallback: if an agent errored this run but we have
@@ -66,11 +76,12 @@ final class DataController: ObservableObject {
         let workDays = settings.workDays
         let dailyBudget = settings.dailyBudget
         let accounts = settings.claudeAccounts
+        let hyperReset = settings.hyperResetTime
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let result = Self.runCLI(
                 decoder: self.decoder, workDays: workDays, dailyBudget: dailyBudget,
-                bypassCache: force, claudeAccounts: accounts)
+                bypassCache: force, claudeAccounts: accounts, hyperResetTime: hyperReset)
             DispatchQueue.main.async { self.apply(result) }
         }
     }
@@ -95,10 +106,11 @@ final class DataController: ObservableObject {
     /// decodes normally and is kept).
     private static func runCLI(
         decoder: JSONDecoder, workDays: Int, dailyBudget: Double, bypassCache: Bool,
-        claudeAccounts: [ClaudeAccount]
+        claudeAccounts: [ClaudeAccount], hyperResetTime: String
     ) -> Result<[AgentSnapshot], CLIError> {
         let base = runAll(
-            decoder: decoder, workDays: workDays, dailyBudget: dailyBudget, bypassCache: bypassCache)
+            decoder: decoder, workDays: workDays, dailyBudget: dailyBudget, bypassCache: bypassCache,
+            hyperResetTime: hyperResetTime)
         guard case .success(var snaps) = base else { return base }
 
         for account in claudeAccounts {
@@ -113,7 +125,8 @@ final class DataController: ObservableObject {
 
     /// Run `agent-usage all --json --work-days N --daily-budget B` and decode the array.
     private static func runAll(
-        decoder: JSONDecoder, workDays: Int, dailyBudget: Double, bypassCache: Bool
+        decoder: JSONDecoder, workDays: Int, dailyBudget: Double, bypassCache: Bool,
+        hyperResetTime: String
     ) -> Result<[AgentSnapshot], CLIError> {
         let launch = resolveLaunch()
 
@@ -126,6 +139,10 @@ final class DataController: ObservableObject {
         ]
         // A forced refresh skips fresh-cache reuse (still serves stale on a transient error).
         if bypassCache { args += ["--cache-ttl", "0"] }
+        // Hyper's API reports no reset instant. Passing it explicitly is what makes the setting
+        // work from Finder, where the app inherits no shell profile and so no HYPER_RESET_TIME.
+        let reset = hyperResetTime.trimmingCharacters(in: .whitespaces)
+        if !reset.isEmpty { args += ["--reset-time", reset] }
         process.arguments = args
 
         let stdout = Pipe()

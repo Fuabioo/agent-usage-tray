@@ -6,7 +6,8 @@
 //!
 //! - the [`Provider`] trait every agent implements ([`provider`]),
 //! - the normalized [`Usage`] / [`Window`] / [`Metric`] schema agents report into ([`schema`]),
-//! - [`pace`]-based color coding and [`projection`] of credit pools, and
+//! - [`pace`]-based color coding and [`projection`] of credit pools,
+//! - [`history`]-derived burn rate and burst for agents that bill one multi-day quota, and
 //! - the shared [`Budget`] settings and small [`time`] helpers.
 //!
 //! Concrete providers (Claude, Codex, …) live in the `agent-usage-providers` crate so that this
@@ -14,7 +15,9 @@
 
 pub mod budget;
 pub mod cache;
+pub mod config;
 pub mod error;
+pub mod history;
 pub mod pace;
 pub mod projection;
 pub mod provider;
@@ -23,10 +26,12 @@ pub mod time;
 
 pub use budget::Budget;
 pub use cache::cache_dir;
+pub use config::{config_dir, config_path, Config};
 pub use error::UsageError;
+pub use history::{Burst, History, Sample, Trend};
 pub use pace::{
-    compute_pool_color, compute_session_color, compute_weekly_pace_color, days_into_cycle,
-    default_window_color, reset_day_name, PaceColor,
+    compute_burst_color, compute_pool_color, compute_session_color, compute_weekly_pace_color,
+    days_into_cycle, default_window_color, reset_day_name, PaceColor,
 };
 pub use projection::{project, Projection};
 pub use provider::{FetchOptions, Provider};

@@ -23,7 +23,7 @@ change.
 
 ## Screenshots
 
-The menu bar shows each agent's `weekly · session %`, color-coded by pace; the dashboard popover
+The menu bar shows each agent's `weekly · near-term %`, color-coded by pace; the dashboard popover
 adds per-agent ring gauges, reset countdowns, and burn-rate context. _(This example runs a
 multi-account, power-user setup — Codex, an opt-in [Charm Hyper](https://hyper.charm.land) credit
 pool, and a second "Personal" Claude login. A fresh install shows just Claude Code + Codex.)_
@@ -62,7 +62,34 @@ agent-usage all --status                       # human-readable report for every
 ```
 
 To add the opt-in [Charm Hyper](https://hyper.charm.land) credit pool, set `HYPER_API_KEY`; it
-then joins `all` and the menu bar automatically. See [CLI](#cli) for the full surface.
+then joins `all` and the menu bar automatically.
+
+Hyper's API reports only a balance — no reset instant — so it has to be told when your daily
+credits refresh. In the menu bar app that's **Settings → Credits reset**; for the CLI it's the
+config file (below), `--reset-time`, or the `HYPER_RESET_TIME` env var. The format is `HH:MM` plus
+an optional zone, where a bare value means UTC — `"08:00 local"` tracks 8am on your machine's clock
+through a DST change, where a hand-converted UTC value would drift an hour twice a year. Unset
+defaults to midnight UTC; a malformed value is a hard error rather than a silent fallback.
+
+### Configuration
+
+Settings resolve **flag → environment → config file → built-in default**. The config file is the
+CLI's own baseline, so a frontend passing its settings as arguments always wins:
+
+```jsonc
+// ~/.config/agent-usage/config.json   ($XDG_CONFIG_HOME honored)
+{
+  "work_days": 4,               // 1–7; daily_budget defaults to 100 / work_days
+  "reset_time": "08:00 local"   // HH:MM + optional zone: `local`, `Z`, or ±HH:MM
+}
+```
+
+Every key is optional. A missing file is fine; one that exists but doesn't parse — including a
+misspelled key — is a hard error, since a setting that silently fails to apply is exactly what the
+file exists to prevent.
+
+Note the macOS app keeps its own settings in `UserDefaults` and passes them as flags, so it
+overrides this file rather than reading it. See [CLI](#cli) for the full surface.
 
 ## Status & roadmap
 
@@ -73,7 +100,7 @@ then joins `all` and the menu bar automatically. See [CLI](#cli) for the full su
 | 3        | Linux COSMIC panel applet         | ⏳ planned (Rust/libcosmic, links the core)       |
 
 The UI (see [Screenshots](#screenshots)) is a multi-agent menu bar — each agent shows
-`weekly·session %`, color-coded by pace — and a dashboard with per-agent ring gauges, burn-rate
+`weekly·near-term %`, color-coded by pace — and a dashboard with per-agent ring gauges, burn-rate
 alerts ("out ~Thu at this rate"), and an agent list where each agent declares its own source
 ("via cc-usage CLI", "via local config", "via gcloud auth", …).
 
@@ -89,6 +116,9 @@ crates/
                              a consumable credit Pool), AgentInfo, Usage
                            - pace coloring (weekly pace, session thresholds, pool color)
                            - projection (burn-rate → depletion date, "out before reset?")
+                           - usage history (sampled burn rate + short-horizon "burst" brake
+                             for agents that bill a single multi-day quota)
+                           - the CLI config file (lowest-precedence settings baseline)
   agent-usage-providers/   Concrete providers + a registry:
                            - claude  (real — Anthropic OAuth usage API; file + macOS Keychain)
                            - codex   (real — Codex/ChatGPT usage API at backend-api/wham/usage;
@@ -158,7 +188,11 @@ JSON with an `error` object and exits non-zero. Shape (success):
       "resets_at": "...", "resets_in_secs": 13581,  "pace": "green" }
   ],
   "pace": { "work_day_index": 4, "daily_ceiling": 80.0, "remaining": 22.0,
-            "reset_day_local": "Mon Jun 15, 8:00 PM" }
+            "reset_day_local": "Mon Jun 15, 8:00 PM" },
+  // Present once enough usage history has been sampled — see "Burn rate and the burst brake".
+  "trend": { "burn_per_day": 24.0, "measured_over_secs": 86400,
+             "projected_exhaustion": "...", "exhausts_before_reset": true,
+             "recent": { "used_pct": 20.0, "span_secs": 18000, "pace": "red" } }
 }
 ```
 
@@ -186,6 +220,27 @@ them, even though no built-in provider uses it yet):
 - **Session** window: fixed thresholds (`≤50` green, `≤80` yellow, else red).
 - **Credit pool**: red if projected to deplete before reset (or `≥90%` used), yellow at `≥75%`,
   else green.
+- **Burst**: measured against **one work day's budget**, not against what's left — `≥` a full
+  day's allowance inside the burst window is red, `≥` half is yellow.
+
+### Burn rate and the burst brake
+
+A short rolling window is self-limiting: you can't spend a week's budget in one afternoon while a
+5-hour limit is also stopping you. Agents that bill a **single multi-day quota** (Codex now does)
+have no such brake — one long sitting can quietly eat the whole cycle. So the CLI reconstructs
+one by sampling each agent's weekly `used_pct` on every live fetch into
+`~/.cache/agent-usage/<id>.history.json`, and derives:
+
+- **burn rate** — percent of the cycle consumed per day, over the trailing 24h;
+- **projected exhaustion** — when the cycle hits 100% at that rate, and whether that lands
+  *before* it would have reset (the dashboard raises a red banner when it does);
+- **burst** — percent of the cycle consumed in the last 5 hours. This is the replacement brake:
+  it answers "how hot am I running *right now*" rather than "how much is left", and it takes the
+  session window's place in the menu bar for agents that no longer expose one.
+
+It needs no setup and stores nothing but timestamps and percentages. Trends appear once there is
+enough history to be honest about (~30 min for the burst, ~2h for the rate) — until then the
+`trend` key is simply absent rather than guessed. `--no-cache` opts out of the series entirely.
 
 ## macOS menu bar app
 
@@ -196,17 +251,21 @@ bundles and spawns the `agent-usage` CLI and renders its JSON. See
 - **Menu bar** — one configurable indicator, agents separated by a divider and tinted by pace
   (mint when in surplus). Display modes (Settings → "Menu bar shows"): *icon only* (color-coded
   glyphs), *worst metric* (single highest %), *icon + worst*, *per-agent %*, *per-agent · both
-  windows* (`weekly · session`, the default), *only yellow/red* (hide on-track agents), and
-  *selected agent only*.
+  windows* (`weekly · near-term`, the default), *only yellow/red* (hide on-track agents), and
+  *selected agent only*. The near-term number is the agent's session window, or — for agents that
+  bill a single multi-day quota and expose none — the sampled 5h burst.
 - **Dashboard popup** — "Today's pace": a ring gauge per agent showing today's headroom
   ("20% left", or "out ~Thu" for a depleting pool) and the agent's own work day (`day N/M`, since
-  agents renew on different days); a burn-rate alert banner for any pool projected to run dry; and
-  per-window rows showing each window's remaining plus its exact local reset moment ("resets Mon
-  Jun 15, 8:00 PM · in 3d 8h"). Footer shows last-updated (with a "cached" marker when serving
-  stale data), Refresh, and a settings gear.
-- **Settings** — display mode, appearance (System/Light/Dark), work days, and per-agent enable;
-  persisted in `UserDefaults`. Right-click the bar item for Refresh / Settings / Launch at Login /
-  Quit.
+  agents renew on different days); alert banners for any pool projected to run dry and any weekly
+  budget on course to be spent before it resets ("weekly budget gone ~Thu at this rate · burning
+  ≈24%/day · 20% in the last 5h"); and per-window rows showing each window's remaining plus its
+  exact local reset moment ("resets Mon Jun 15, 8:00 PM · in 3d 8h"), followed by the burst line
+  ("last 5h — 20% used"). Footer shows last-updated (with a "cached" marker when serving stale
+  data), Refresh, and a settings gear.
+- **Settings** — display mode, credit readout, credits reset time, appearance (System/Light/Dark),
+  work days, and per-agent enable; persisted in `UserDefaults`. The credits-reset field echoes back
+  the resolved next refresh (or the parse error) so you can see what the value did. Right-click the
+  bar item for Refresh / Settings / Launch at Login / Quit.
 
 Agent logos are committed vector PDFs (rendered from each agent's SVG with `macos/render-logos.sh`
 via headless Chrome) and tinted per pace, so glyphs stay crisp at any size.

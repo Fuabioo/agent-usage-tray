@@ -99,6 +99,27 @@ pub fn compute_session_color(utilization: f64) -> PaceColor {
     }
 }
 
+/// Computes the color for the short-horizon **burst** readout: how much of a multi-day budget
+/// was consumed in the last few hours (see [`crate::history`]).
+///
+/// This is the brake a short rolling window used to provide. Where the weekly pace color asks
+/// "are you ahead of today's ceiling", this asks "how hot are you running right now" — so it is
+/// measured against one work day's allowance rather than against what's left. Spending a whole
+/// day's budget inside a single burst window is Red no matter how much of the cycle remains,
+/// because at that rate the cycle is gone in a day or two.
+pub fn compute_burst_color(burst_pct: f64, daily_budget: f64) -> PaceColor {
+    if daily_budget <= 0.0 {
+        return PaceColor::Red; // defensive, as in the weekly pace
+    }
+    if burst_pct >= daily_budget {
+        PaceColor::Red
+    } else if burst_pct >= 0.5 * daily_budget {
+        PaceColor::Yellow
+    } else {
+        PaceColor::Green
+    }
+}
+
 /// Computes the color for a consumable credit pool.
 ///
 /// A pool projected to deplete before it refills is always Red (you'll run out). Otherwise it
@@ -261,6 +282,20 @@ mod tests {
         assert_eq!(compute_session_color(51.0), PaceColor::Yellow);
         assert_eq!(compute_session_color(80.0), PaceColor::Yellow);
         assert_eq!(compute_session_color(81.0), PaceColor::Red);
+    }
+
+    #[test]
+    fn burst_thresholds_scale_with_the_daily_budget() {
+        // A whole work day's budget inside one burst window -> red.
+        assert_eq!(compute_burst_color(20.0, 20.0), PaceColor::Red);
+        assert_eq!(compute_burst_color(25.0, 20.0), PaceColor::Red);
+        // Half a day's budget -> yellow.
+        assert_eq!(compute_burst_color(10.0, 20.0), PaceColor::Yellow);
+        assert_eq!(compute_burst_color(9.9, 20.0), PaceColor::Green);
+        // A 7-work-day split (14.3%/day) warns proportionally earlier.
+        assert_eq!(compute_burst_color(10.0, 14.3), PaceColor::Yellow);
+        assert_eq!(compute_burst_color(15.0, 14.3), PaceColor::Red);
+        assert_eq!(compute_burst_color(5.0, 0.0), PaceColor::Red);
     }
 
     #[test]

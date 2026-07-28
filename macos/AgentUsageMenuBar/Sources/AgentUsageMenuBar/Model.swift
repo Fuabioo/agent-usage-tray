@@ -63,6 +63,8 @@ struct AgentSnapshot: Codable, Identifiable {
     let config: ConfigDTO
     let windows: [WindowDTO]?
     let pace: PaceSummaryDTO?
+    /// How fast the multi-day window is burning. Absent until the CLI has sampled enough history.
+    let trend: TrendDTO?
     let error: ErrorDTO?
     /// Set by the CLI when it served a cached snapshot after a transient fetch failure.
     let stale: Bool?
@@ -76,6 +78,16 @@ struct AgentSnapshot: Codable, Identifiable {
         windows?.first { $0.kind == kind }
     }
 
+    /// True when the multi-day budget is on course to be spent before it resets.
+    var burnsOutEarly: Bool { trend?.exhaustsBeforeReset == true }
+
+    /// Every pace this agent reports, including the burst. The burst belongs here because for an
+    /// agent billing a single multi-day quota it is the only signal that reacts within the hour —
+    /// the weekly window itself barely moves while a sitting is eating it.
+    private var allPaces: [PaceColor] {
+        (windows ?? []).map(\.pace) + [trend?.recent?.pace].compactMap { $0 }
+    }
+
     /// The headline window for the ring gauge: weekly, else credits, else session, else first.
     var primaryWindow: WindowDTO? {
         window("weekly") ?? window("credits") ?? window("session") ?? windows?.first
@@ -83,13 +95,13 @@ struct AgentSnapshot: Codable, Identifiable {
 
     /// Most severe pace across all windows (drives the menu bar glyph tint).
     var worstPace: PaceColor {
-        (windows ?? []).map(\.pace).max(by: { $0.severity < $1.severity }) ?? .green
+        allPaces.max(by: { $0.severity < $1.severity }) ?? .green
     }
 
     /// Pace shown on the agent's glyph: anything needing attention dominates, otherwise a
     /// surplus is celebrated (gold), otherwise green.
     var displayPace: PaceColor {
-        let paces = (windows ?? []).map(\.pace)
+        let paces = allPaces
         if paces.contains(.red) { return .red }
         if paces.contains(.yellow) { return .yellow }
         if paces.contains(.surplus) { return .surplus }
@@ -125,6 +137,30 @@ struct PoolDTO: Codable {
     let burnPerDay: Double?
     let projectedDepletion: Date?
     let depletesBeforeReset: Bool
+}
+
+/// How fast a multi-day window is being consumed, derived by the CLI from sampled history.
+///
+/// `pace` answers "am I ahead of today's ceiling"; this answers "how fast am I moving and when
+/// does the cycle run out at this speed" — the question that matters once an agent bills a single
+/// multi-day quota with no short window to stop a long sitting.
+struct TrendDTO: Codable {
+    /// Percent of the cycle consumed per day at the recently observed rate.
+    let burnPerDay: Double?
+    /// Span the burn rate was measured over — under a day while history is still young.
+    let measuredOverSecs: Int?
+    let projectedExhaustion: Date?
+    let exhaustsBeforeReset: Bool
+    let recent: BurstDTO?
+}
+
+/// The short-horizon brake: how much of the multi-day budget went in the last few hours.
+struct BurstDTO: Codable {
+    /// Percent of the whole cycle consumed inside `spanSecs` — not a percentage of the span.
+    let usedPct: Double
+    let spanSecs: Int
+    /// Colored by the CLI against one work day's budget: it warns on speed, not on what's left.
+    let pace: PaceColor
 }
 
 struct PaceSummaryDTO: Codable {

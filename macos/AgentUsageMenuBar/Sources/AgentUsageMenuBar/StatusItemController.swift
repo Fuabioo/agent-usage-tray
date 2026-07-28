@@ -219,7 +219,23 @@ final class StatusItemController {
         }
     }
 
-    /// Append each agent as `glyph weekly · session %` (both) or `glyph worst%`, divided.
+    /// The near-term reading paired with the weekly one in the bar's two-number mode.
+    ///
+    /// Normally the agent's own short window. When an agent bills a single multi-day quota and
+    /// exposes no short window, the sampled burst takes that slot — the second number's job is to
+    /// answer "how hot am I running right now", and without it a bar showing only a slow-moving
+    /// weekly percentage gives no sign that the cycle is being eaten in one sitting.
+    private static func nearTermReading(_ agent: AgentSnapshot) -> (text: String, color: NSColor)? {
+        if let s = agent.window("session") {
+            return (intPct(s.usedPct) + "%", s.pace.nsColor)
+        }
+        if let burst = agent.trend?.recent {
+            return (intPct(burst.usedPct) + "%", burst.pace.nsColor)
+        }
+        return nil
+    }
+
+    /// Append each agent as `glyph weekly · near-term %` (both) or `glyph worst%`, divided.
     private static func appendPerAgent(
         _ out: NSMutableAttributedString, agents: [AgentSnapshot], font: NSFont, both: Bool,
         credit: AppSettings.CreditDisplay
@@ -235,10 +251,10 @@ final class StatusItemController {
                 continue
             }
 
-            if both, let w = agent.window("weekly"), let s = agent.window("session") {
+            if both, let w = agent.window("weekly"), let near = nearTermReading(agent) {
                 out.append(segment(intPct(w.usedPct), color: w.pace.nsColor, font: font))
                 out.append(segment(" · ", color: sep, font: font))
-                out.append(segment(intPct(s.usedPct) + "%", color: s.pace.nsColor, font: font))
+                out.append(segment(near.text, color: near.color, font: font))
             } else if let w = worstWindow(agent) {
                 out.append(segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
             }
