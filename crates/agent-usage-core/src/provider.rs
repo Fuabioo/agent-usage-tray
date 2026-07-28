@@ -33,6 +33,10 @@ pub struct FetchOptions {
     pub keychain_account: Option<String>,
     /// When true, never consult the macOS Keychain.
     pub no_keychain: bool,
+    /// API key for agents authenticated by one (currently Hyper). Resolved by the caller so the
+    /// key can come from a config file as well as the environment — which is what lets an agent
+    /// survive a reboot, since an app started by launchd inherits no shell profile.
+    pub api_key: Option<String>,
     /// When an agent's daily cycle resets, for the agents whose API doesn't report it (currently
     /// Hyper, whose `/v1/credits` returns only a balance). `HH:MM` with an optional zone — see
     /// the Hyper provider. Takes precedence over whatever environment variable the provider would
@@ -50,6 +54,7 @@ impl Default for FetchOptions {
             keychain_account: None,
             no_keychain: false,
             reset_time: None,
+            api_key: None,
         }
     }
 }
@@ -74,7 +79,10 @@ pub trait Provider: Send + Sync {
     /// Opt-in agents override this to return `false` until their credentials are present, so a
     /// fresh install isn't cluttered with an agent nobody set up. Direct lookup by id (the
     /// per-agent subcommand) ignores this, so `agent-usage <id>` always works and errors clearly.
-    fn in_default_set(&self) -> bool {
+    ///
+    /// Takes the resolved options because "is this configured" may depend on them: a key supplied
+    /// by a config file counts exactly as much as one exported into the environment.
+    fn in_default_set(&self, _opts: &FetchOptions) -> bool {
         true
     }
 }

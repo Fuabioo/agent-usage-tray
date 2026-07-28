@@ -14,6 +14,10 @@ struct SettingsView: View {
     @State private var newAccountConfigDir = ""
     @State private var newAccountService = ""
 
+    // Hyper API key entry. Held only long enough to hand to the CLI — never persisted here.
+    @State private var hyperKeyEntry = ""
+    @State private var hyperKeyError: String?
+
     /// Agents to list — whatever the CLI has reported (enabled or not).
     private var knownAgents: [AgentDTO] {
         var seen = Set<String>()
@@ -68,6 +72,10 @@ struct SettingsView: View {
             Divider()
 
             row("Credits reset") { creditsResetField }
+
+            Divider()
+
+            row("Hyper key") { hyperKeyField }
 
             Divider()
 
@@ -255,6 +263,48 @@ struct SettingsView: View {
             Text("Unset — falls back to HYPER_RESET_TIME, then midnight UTC.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    /// The Charm Hyper API key. Stored by the CLI in its `0600` config file, not here — an app
+    /// started by launchd at login inherits no shell profile, so a `HYPER_API_KEY` export is
+    /// invisible to it and Hyper would drop off the menu bar after every reboot.
+    ///
+    /// The field is never populated with the stored key; we only report whether one exists. The
+    /// key reaches the CLI on stdin, so it never appears in any process's arguments.
+    private var hyperKeyField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                SecureField(controller.hyperKeyIsSet ? "•••••••• (stored)" : "hyper_…",
+                            text: $hyperKeyEntry)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 200)
+                Button("Save") { saveHyperKey(hyperKeyEntry) }
+                    .disabled(hyperKeyEntry.trimmingCharacters(in: .whitespaces).isEmpty)
+                if controller.hyperKeyIsSet {
+                    Button("Remove") { saveHyperKey("") }
+                }
+            }
+            if let error = hyperKeyError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(PaceColor.red.swiftUIColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(controller.hyperKeyIsSet
+                     ? "Stored in the CLI config (owner-only). Survives a reboot — unlike a shell export."
+                     : "Optional. Without a key here or a HYPER_API_KEY export, Hyper stays hidden.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func saveHyperKey(_ key: String) {
+        controller.saveHyperAPIKey(key) { error in
+            hyperKeyError = error
+            if error == nil { hyperKeyEntry = "" }
         }
     }
 

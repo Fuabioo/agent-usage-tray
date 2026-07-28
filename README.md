@@ -61,8 +61,12 @@ cargo install --path crates/agent-usage-cli   # puts `agent-usage` on your PATH
 agent-usage all --status                       # human-readable report for every default agent
 ```
 
-To add the opt-in [Charm Hyper](https://hyper.charm.land) credit pool, set `HYPER_API_KEY`; it
-then joins `all` and the menu bar automatically.
+To add the opt-in [Charm Hyper](https://hyper.charm.land) credit pool, give it an API key — in the
+menu bar app that's **Settings → Hyper key**, for the CLI it's `agent-usage config --save
+--hyper-api-key -` (the key is read from stdin so it never appears in `ps`). It then joins `all`
+and the menu bar automatically. A `HYPER_API_KEY` export still works, but prefer the stored key:
+an app started at login inherits no shell profile, so an exported variable is invisible to it and
+Hyper would drop off the menu bar after every reboot.
 
 Hyper's API reports only a balance — no reset instant — so it has to be told when your daily
 credits refresh. In the menu bar app that's **Settings → Credits reset**; for the CLI it's the
@@ -80,16 +84,27 @@ CLI's own baseline, so a frontend passing its settings as arguments always wins:
 // ~/.config/agent-usage/config.json   ($XDG_CONFIG_HOME honored)
 {
   "work_days": 4,               // 1–7; daily_budget defaults to 100 / work_days
-  "reset_time": "08:00 local"   // HH:MM + optional zone: `local`, `Z`, or ±HH:MM
+  "reset_time": "08:00 local",  // HH:MM + optional zone: `local`, `Z`, or ±HH:MM
+  "hyper_api_key": "…"          // written by `config --save`, never printed back
 }
 ```
 
 Every key is optional. A missing file is fine; one that exists but doesn't parse — including a
 misspelled key — is a hard error, since a setting that silently fails to apply is exactly what the
-file exists to prevent.
+file exists to prevent. The file is written `0600`, because it may hold an API key.
 
-Note the macOS app keeps its own settings in `UserDefaults` and passes them as flags, so it
-overrides this file rather than reading it. See [CLI](#cli) for the full surface.
+Inspect and edit it through the CLI rather than by hand:
+
+```sh
+agent-usage config --status                          # show settings (the key reads as <set>)
+agent-usage config --save --work-days 4              # change one setting, leave the rest
+agent-usage config --save --reset-time ""            # an empty value removes a setting
+printf '%s' "$KEY" | agent-usage config --save --hyper-api-key -
+```
+
+The macOS app writes this file too, so the settings it owns stay in sync with what a hand-run
+`agent-usage` sees; the flags it passes still override the file at runtime. See [CLI](#cli) for
+the full surface.
 
 ## Status & roadmap
 

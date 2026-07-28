@@ -1,7 +1,8 @@
 //! Charm Hyper provider.
 //!
-//! Calls `GET https://hyper.charm.land/v1/credits` with an API key
-//! (from `HYPER_API_KEY` env var) and returns a `Credits` pool window.
+//! Calls `GET https://hyper.charm.land/v1/credits` with an API key — from
+//! [`FetchOptions::api_key`] (which the CLI fills from its config file) or the `HYPER_API_KEY`
+//! environment variable — and returns a `Credits` pool window.
 //!
 //! Hyper's subscription model:
 //!   - 250 HC refresh every 24h (non-stackable, unused expires)
@@ -69,15 +70,16 @@ impl Provider for Hyper {
         "Hyper /v1/credits API"
     }
 
-    /// Hyper is opt-in: it only joins the default `all` sweep once `HYPER_API_KEY` is set, so a
-    /// fresh install shows just the agents most people have (Claude, Codex). `agent-usage hyper`
-    /// still resolves directly and reports a clear "HYPER_API_KEY not set" error when unset.
-    fn in_default_set(&self) -> bool {
-        std::env::var_os("HYPER_API_KEY").is_some()
+    /// Hyper is opt-in: it only joins the default `all` sweep once an API key is available, so a
+    /// fresh install shows just the agents most people have (Claude, Codex). Whether the key came
+    /// from the config file or the environment makes no difference here. `agent-usage hyper` still
+    /// resolves directly and reports a clear "no Hyper API key" error when there is none.
+    fn in_default_set(&self, opts: &FetchOptions) -> bool {
+        resolve_api_key(opts).is_ok()
     }
 
     fn fetch(&self, opts: &FetchOptions) -> Result<Usage, UsageError> {
-        let api_key = resolve_api_key()?;
+        let api_key = resolve_api_key(opts)?;
         let now = chrono::Utc::now();
 
         let bearer = format!("Bearer {api_key}");
@@ -125,10 +127,29 @@ impl Provider for Hyper {
     }
 }
 
-/// Read the API key from the `HYPER_API_KEY` environment variable.
-fn resolve_api_key() -> Result<String, UsageError> {
-    std::env::var("HYPER_API_KEY")
-        .map_err(|_| UsageError::CredentialsRead("HYPER_API_KEY not set".to_string()))
+/// Resolve the API key: the caller's resolved value (config file) first, then the
+/// `HYPER_API_KEY` environment variable.
+///
+/// A config-supplied key is what makes this agent survive a reboot — an app started by launchd at
+/// login inherits no shell profile, so an exported variable is invisible to it.
+fn resolve_api_key(opts: &FetchOptions) -> Result<String, UsageError> {
+    opts.api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("HYPER_API_KEY")
+                .ok()
+                .map(|k| k.trim().to_string())
+                .filter(|k| !k.is_empty())
+        })
+        .ok_or_else(|| {
+            UsageError::CredentialsRead(
+                "no Hyper API key: set `hyper_api_key` in the config file or export HYPER_API_KEY"
+                    .to_string(),
+            )
+        })
 }
 
 /// The clock a [`ResetSpec`]'s time is read on.

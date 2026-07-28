@@ -89,7 +89,7 @@ Pace is based on **today's headroom**, not cumulative ratio:
 ### Credential resolution
 - Claude: `~/.claude/.credentials.json` (JSON with `claudeAiOauth.accessToken`), falls back to macOS Keychain (`security find-generic-password -s "Claude Code-credentials" -w`).
 - Codex: `~/.codex/auth.json` (JSON with `tokens.access_token` and `tokens.account_id`).
-- Hyper: `HYPER_API_KEY` env var. It's an **opt-in agent** — `Provider::in_default_set` returns false until the var is set, so a fresh install's `all`/`list`/menu bar show just Claude + Codex (the setup most people have). Once the key is set, Hyper joins automatically. `agent-usage hyper` always resolves directly and reports a clear "HYPER_API_KEY not set" error when the var is absent. Reset time from `FetchOptions::reset_time` (the CLI's `--reset-time`, which the macOS Settings window drives) or, when unset, the `HYPER_RESET_TIME` env var: `HH:MM` plus an optional zone — omitted or `Z`/`UTC`/`GMT` for UTC, `local` for the machine's timezone, or a fixed `±HH:MM` / `±HHMM` / `±HH` offset (e.g. `20:18`, `08:00 local`, `08:00-06:00`). **A bare `HH:MM` is UTC**, so pre-existing configs keep their meaning. Defaults to midnight UTC if unset, hard error if malformed.
+- Hyper: the `hyper_api_key` config key, else the `HYPER_API_KEY` env var. It's an **opt-in agent** — `Provider::in_default_set(&opts)` returns false until a key resolves from *either* source, so a fresh install's `all`/`list`/menu bar show just Claude + Codex (the setup most people have). Once a key exists, Hyper joins automatically. `agent-usage hyper` always resolves directly and reports a clear "no Hyper API key" error when there is none. Prefer the config key: an app started by launchd at login inherits no shell profile, so an exported var is invisible to it (see *Secrets and `agent-usage config`*). Reset time from `FetchOptions::reset_time` (the CLI's `--reset-time`, which the macOS Settings window drives) or, when unset, the `HYPER_RESET_TIME` env var: `HH:MM` plus an optional zone — omitted or `Z`/`UTC`/`GMT` for UTC, `local` for the machine's timezone, or a fixed `±HH:MM` / `±HHMM` / `±HH` offset (e.g. `20:18`, `08:00 local`, `08:00-06:00`). **A bare `HH:MM` is UTC**, so pre-existing configs keep their meaning. Defaults to midnight UTC if unset, hard error if malformed.
 - All providers support `--creds-path` override. Claude also supports `--no-keychain`/`--keychain-service` flags.
 - Credential helpers (`creds.rs`) use blocking file I/O and `security` CLI — no async.
 
@@ -120,8 +120,15 @@ Settings resolve **flag → environment → config file → built-in default** (
 - **Config file** (`core/src/config.rs`): `$XDG_CONFIG_HOME/agent-usage/config.json`, else
   `~/.config/agent-usage/config.json`. Deliberately the *config* dir, not the cache dir — this is
   authored state, not something the tool may discard. Keys mirror the long flags:
-  `work_days`, `daily_budget`, `reset_time`. Every field is optional; an absent one means "no
-  opinion" and falls through.
+  `work_days`, `daily_budget`, `reset_time`, `hyper_api_key`. Every field is optional; an absent
+  one means "no opinion" and falls through.
+- **Written `0600`, via a temp file + rename.** It may hold an API key, so the mode is set
+  explicitly rather than left to the umask (which yields world-readable — exactly how the same
+  secret ends up exposed in a `~/.env`). The rename makes a crash mid-write unable to leave a
+  truncated file that the next run would reject.
+- **`Patch` has three states per field**, because `Option` only has two: `Some` sets, `None`
+  leaves alone, `clear_*` removes. `Config::merge` never touches a field the patch is silent
+  about, so a frontend saving one setting can't erase keys a user hand-wrote.
 - **It is the lowest-precedence source**, so the macOS app passing its own settings as arguments
   keeps overriding it exactly as before. The env sits above the file because it is the more
   specific of the two ambient sources, and because that preserves what an existing
@@ -135,6 +142,30 @@ Settings resolve **flag → environment → config file → built-in default** (
 - Resolution helpers that read the environment are split into a pure `*_from(...)` function taking
   the env value as an argument, so tests don't depend on (or mutate) process-global state — the
   same pattern as `core::cache::resolve_cache_dir`.
+
+### Secrets and `agent-usage config`
+
+`agent-usage config` shows the stored settings; `--save` merges the given flags into the file. The
+CLI owns both reading and writing so a frontend never reproduces its path rules or schema —
+getting either wrong is silent (a file nobody reads) or fatal (an unknown key is a hard error).
+
+- **`hyper_api_key` never travels in argv.** `--hyper-api-key -` reads the key from **stdin**;
+  an argument is readable by any user on the machine via `ps`. `DataController.saveHyperAPIKey`
+  writes it to the child's stdin and always closes the pipe (the CLI blocks on it otherwise).
+- **The key is never printed back.** `config` reports only `hyper_api_key_set: true/false`, so it
+  can't leak into terminal scrollback or a captured log. The Settings field is likewise never
+  populated with the stored value — the app asks the CLI whether one exists.
+- **The config file is the single store for the key.** It is deliberately *not* mirrored into
+  `UserDefaults`, which is a world-readable plist.
+- **`Provider::in_default_set` takes `&FetchOptions`** so a config-supplied key opts Hyper in
+  exactly as an exported one does. Without this, storing the key would fix `agent-usage hyper` but
+  still drop Hyper from `all` and the menu bar.
+- **This is what makes Hyper reboot-resilient**: launchd starts a login-item app with no shell
+  profile, so `HYPER_API_KEY` from `.zshrc`/`.env` is invisible and the agent silently vanished
+  after every restart. Verify with `env -i HOME=$HOME PATH=/usr/bin:/bin agent-usage all --json`.
+- **`syncConfig(allowClear:)`**: a change-driven sync passes an empty reset time through (the user
+  meant "remove it"), but the **startup** sync must not — a fresh install has an empty setting and
+  would otherwise erase a `reset_time` a CLI user hand-wrote, having never opened the app.
 
 ### Trend: burn rate and the burst brake
 

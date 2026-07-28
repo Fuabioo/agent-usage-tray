@@ -49,6 +49,68 @@ final class DataController: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] _ in self?.refresh(force: true) }
             .store(in: &cancellables)
+
+        // Mirror what the CLI can't derive into its config file, so `agent-usage` run by hand
+        // agrees with the menu bar. Debounced for the same reason as above.
+        Publishers.Merge(
+            settings.$workDays.map { _ in () },
+            settings.$hyperResetTime.map { _ in () }
+        )
+        .dropFirst()
+        .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
+        .sink { [weak self] in self?.syncConfig(allowClear: true) }
+        .store(in: &cancellables)
+    }
+
+    /// Whether the CLI's config file currently holds a Hyper API key. Read back from the CLI
+    /// rather than stored here — the key itself must live in exactly one place, and that place is
+    /// the `0600` config file, not a world-readable preferences plist.
+    @Published private(set) var hyperKeyIsSet = false
+
+    /// Mirror the settings the CLI can't derive into its config file.
+    ///
+    /// The app passes these as flags too, which is what makes them take effect *now*. Writing
+    /// them as well is what makes `agent-usage` correct when run by hand.
+    ///
+    /// `allowClear` distinguishes the two callers. A user emptying the reset field means "remove
+    /// it", so a change-driven sync passes an empty value through. The **startup** sync must not:
+    /// a fresh install has an empty setting and would otherwise erase a `reset_time` the user had
+    /// hand-written into the config file, having never touched the app at all.
+    func syncConfig(allowClear: Bool) {
+        let workDays = settings.workDays
+        let resetTime = settings.hyperResetTime.trimmingCharacters(in: .whitespaces)
+        var args = ["--work-days", String(workDays)]
+        if allowClear || !resetTime.isEmpty {
+            args += ["--reset-time", resetTime]
+        }
+        DispatchQueue.global(qos: .utility).async {
+            _ = Self.runConfigSave(args: args, stdin: nil)
+        }
+    }
+
+    /// Store (or, with an empty string, remove) the Hyper API key, then refresh.
+    ///
+    /// The key travels on the child's **stdin**, never in its arguments: an argument is readable
+    /// by any process on the machine through `ps`.
+    func saveHyperAPIKey(_ key: String, completion: @escaping (String?) -> Void) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let error = Self.runConfigSave(args: ["--hyper-api-key", "-"], stdin: trimmed)
+            DispatchQueue.main.async {
+                self?.refreshConfigState()
+                self?.refresh(force: true)
+                completion(error)
+            }
+        }
+    }
+
+    /// Read back what the config file holds. Only *whether* a key is set — the CLI never prints
+    /// the key itself.
+    func refreshConfigState() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let isSet = Self.runConfigRead()
+            DispatchQueue.main.async { self?.hyperKeyIsSet = isSet }
+        }
     }
 
     /// Latest agents with a per-agent stale fallback: if an agent errored this run but we have
@@ -64,6 +126,10 @@ final class DataController: ObservableObject {
     }
 
     func start() {
+        refreshConfigState()
+        // Seed the config file from current settings so a hand-run `agent-usage` agrees with the
+        // menu bar even if the user never opens Settings. Non-destructive: see `syncConfig`.
+        syncConfig(allowClear: false)
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -121,6 +187,63 @@ final class DataController: ObservableObject {
             }
         }
         return .success(snaps)
+    }
+
+    /// Run `agent-usage config --save …`, optionally feeding `stdin` to the child. Returns an
+    /// error message on failure, or nil on success.
+    private static func runConfigSave(args: [String], stdin: String?) -> String? {
+        let launch = resolveLaunch()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launch.executable)
+        process.arguments = launch.leadingArgs + ["config", "--save", "--json"] + args
+
+        let input = Pipe()
+        let errPipe = Pipe()
+        process.standardInput = input
+        process.standardOutput = Pipe()
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+        } catch {
+            return "failed to launch agent-usage: \(error.localizedDescription)"
+        }
+        // Always close stdin — the CLI blocks reading it when passed `-`.
+        if let stdin { input.fileHandleForWriting.write(Data(stdin.utf8)) }
+        input.fileHandleForWriting.closeFile()
+
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let message = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return message.isEmpty ? "agent-usage config failed" : message
+        }
+        return nil
+    }
+
+    /// Ask the CLI whether a Hyper key is stored. Returns false on any failure — a key we can't
+    /// confirm is one the user should be told to set, not one we assume is fine.
+    private static func runConfigRead() -> Bool {
+        let launch = resolveLaunch()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launch.executable)
+        process.arguments = launch.leadingArgs + ["config", "--json"]
+
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return false
+        }
+        return json["hyper_api_key_set"] as? Bool ?? false
     }
 
     /// Run `agent-usage all --json --work-days N --daily-budget B` and decode the array.

@@ -5,6 +5,7 @@
 //!   agent-usage claude --status   # human-readable report
 //!   agent-usage all               # JSON array: every default agent (opt-in agents join once configured)
 //!   agent-usage list              # list default agents and their sources
+//!   agent-usage config            # show stored settings (`--save` writes them)
 //!
 //! The output shape is identical for every agent (see `output::Snapshot`); only the provider
 //! behind a given subcommand differs. On failure the CLI still prints a valid JSON document
@@ -37,8 +38,9 @@ use serde_json::Value;
 )]
 struct Cli {
     /// Which agent to query: an agent id (e.g. `claude`, `codex`), `all` for every default
-    /// agent (opt-in agents like `hyper` join once their credentials are configured), or
-    /// `list` to list them. A specific id always works, even for an opt-in agent.
+    /// agent (opt-in agents like `hyper` join once their credentials are configured), `list` to
+    /// list them, or `config` to show/update stored settings. A specific id always works, even
+    /// for an opt-in agent.
     #[arg(value_name = "AGENT")]
     agent: String,
 
@@ -109,6 +111,17 @@ struct Cli {
     /// Don't read or write the on-disk usage cache at all.
     #[arg(long)]
     no_cache: bool,
+
+    /// With the `config` subcommand: write the given settings to the config file instead of
+    /// printing it. Only the settings you pass are changed; the rest of the file is preserved.
+    #[arg(long)]
+    save: bool,
+
+    /// With `config --save`: store the Charm Hyper API key. Pass `-` to read it from stdin, which
+    /// is how a frontend should send it — a value passed as an argument is visible to every
+    /// process on the machine via `ps`. Pass an empty value to remove the stored key.
+    #[arg(long, value_name = "KEY")]
+    hyper_api_key: Option<String>,
 }
 
 fn main() {
@@ -135,9 +148,10 @@ fn run(cli: &Cli) -> i32 {
 
     match cli.agent.as_str() {
         "list" => {
-            print_list(cli.status);
+            print_list(cli, &config);
             0
         }
+        "config" => run_config(cli, config),
         "all" => run_all(cli, &budget, &config),
         id => match agent_usage_providers::get(id) {
             Some(provider) => run_one(cli, provider.as_ref(), &budget, &config),
@@ -150,6 +164,126 @@ fn run(cli: &Cli) -> i32 {
             }
         },
     }
+}
+
+/// `agent-usage config` — show the stored config, or with `--save` update it.
+///
+/// The CLI owns reading *and* writing the file so a frontend never has to reproduce its path
+/// rules or its schema; getting either wrong would be silent (a file nobody reads) or fatal
+/// (an unknown key, which is a hard error by design).
+fn run_config(cli: &Cli, mut config: Config) -> i32 {
+    if !cli.save {
+        return print_config(cli, &config);
+    }
+
+    let patch = match config_patch(cli) {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return 2;
+        }
+    };
+    config.merge(patch);
+
+    match config.save() {
+        Ok(path) => {
+            if cli.status {
+                println!("saved {}", path.display());
+            }
+            print_config(cli, &config)
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            2
+        }
+    }
+}
+
+/// Build the update from the flags. An explicitly empty value clears a setting — a bare absence
+/// has to mean "leave alone", so it cannot also mean "remove".
+fn config_patch(cli: &Cli) -> Result<agent_usage_core::config::Patch, UsageError> {
+    let mut patch = agent_usage_core::config::Patch {
+        work_days: cli.work_days,
+        daily_budget: cli.daily_budget,
+        ..Default::default()
+    };
+
+    if let Some(raw) = cli.reset_time.as_deref() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            patch.clear_reset_time = true;
+        } else {
+            patch.reset_time = Some(trimmed.to_string());
+        }
+    }
+
+    if let Some(raw) = cli.hyper_api_key.as_deref() {
+        // `-` means "the key is on stdin", so a secret never lands in this process's argv where
+        // any user on the machine could read it out of `ps`.
+        let value = if raw == "-" {
+            let mut buf = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+                .map_err(|e| UsageError::Unsupported(format!("could not read key from stdin: {e}")))?;
+            buf
+        } else {
+            raw.to_string()
+        };
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            patch.clear_hyper_api_key = true;
+        } else {
+            patch.hyper_api_key = Some(trimmed.to_string());
+        }
+    }
+
+    Ok(patch)
+}
+
+/// Print the config. The API key is only ever reported as present or absent — printing it would
+/// put a secret into terminal scrollback and any log that captured this output.
+fn print_config(cli: &Cli, config: &Config) -> i32 {
+    let path = agent_usage_core::config_path();
+    if cli.status {
+        match &path {
+            Some(p) if p.exists() => println!("config       = {}", p.display()),
+            Some(p) => println!("config       = {} (not created yet)", p.display()),
+            None => println!("config       = <no config directory>"),
+        }
+        println!(
+            "work_days    = {}",
+            config.work_days.map_or("<unset>".into(), |v| v.to_string())
+        );
+        println!(
+            "daily_budget = {}",
+            config
+                .daily_budget
+                .map_or("<unset>".into(), |v| format!("{v}"))
+        );
+        println!(
+            "reset_time   = {}",
+            config.reset_time.clone().unwrap_or_else(|| "<unset>".into())
+        );
+        println!(
+            "hyper_api_key= {}",
+            if config.hyper_api_key.is_some() {
+                "<set>"
+            } else {
+                "<unset>"
+            }
+        );
+        return 0;
+    }
+
+    let doc = serde_json::json!({
+        "path": path.as_ref().map(|p| p.display().to_string()),
+        "exists": path.as_ref().is_some_and(|p| p.exists()),
+        "work_days": config.work_days,
+        "daily_budget": config.daily_budget,
+        "reset_time": config.reset_time,
+        "hyper_api_key_set": config.hyper_api_key.is_some(),
+    });
+    print_json(&doc);
+    0
 }
 
 /// Fetch and render a single agent. Returns 0 on success/stale, 1 on a usage error.
@@ -205,7 +339,10 @@ fn run_all(cli: &Cli, budget: &Budget, config: &Config) -> i32 {
     if cli.status {
         let opts = fetch_options(cli, config);
         let mut any_err = false;
-        for provider in agent_usage_providers::all().into_iter().filter(|p| p.in_default_set()) {
+        for provider in agent_usage_providers::all()
+            .into_iter()
+            .filter(|p| p.in_default_set(&opts))
+        {
             let snap = match provider.fetch(&opts) {
                 Ok(usage) => {
                     let trend = track_trend(cli, &usage.agent.id, &usage, now, true);
@@ -223,7 +360,11 @@ fn run_all(cli: &Cli, budget: &Budget, config: &Config) -> i32 {
 
     let mut values = Vec::new();
     let mut any_err = false;
-    for provider in agent_usage_providers::all().into_iter().filter(|p| p.in_default_set()) {
+    let default_set_opts = fetch_options(cli, config);
+    for provider in agent_usage_providers::all()
+        .into_iter()
+        .filter(|p| p.in_default_set(&default_set_opts))
+    {
         let (value, code) = agent_json(cli, provider.as_ref(), budget, config, now, None, None);
         if code != 0 {
             any_err = true;
@@ -375,10 +516,11 @@ struct AgentListEntry {
     source: &'static str,
 }
 
-fn print_list(human: bool) {
+fn print_list(cli: &Cli, config: &Config) {
+    let opts = fetch_options(cli, config);
     let entries: Vec<AgentListEntry> = agent_usage_providers::all()
         .iter()
-        .filter(|p| p.in_default_set())
+        .filter(|p| p.in_default_set(&opts))
         .map(|p| AgentListEntry {
             id: p.id(),
             label: p.label(),
@@ -386,7 +528,7 @@ fn print_list(human: bool) {
         })
         .collect();
 
-    if human {
+    if cli.status {
         for e in &entries {
             println!("{:<10} {:<14} — {}", e.id, e.label, e.source);
         }
@@ -453,7 +595,21 @@ fn fetch_options(cli: &Cli, config: &Config) -> FetchOptions {
         keychain_account: cli.keychain_account.clone(),
         no_keychain: cli.no_keychain,
         reset_time: resolve_reset_time(cli, config),
+        api_key: resolve_hyper_api_key(config),
     }
+}
+
+/// The Hyper API key: environment first, then the config file.
+///
+/// Deliberately **not** a CLI flag — an argument is visible to every process on the machine via
+/// `ps`, so a frontend passing a secret that way would leak it. Writing it goes through
+/// `config --save`, which reads the value on stdin for the same reason.
+fn resolve_hyper_api_key(config: &Config) -> Option<String> {
+    std::env::var("HYPER_API_KEY")
+        .ok()
+        .or_else(|| config.hyper_api_key.clone())
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
 }
 
 /// Expand `~` in a user-provided creds path. Kept here (not in core) since it's a CLI concern.
@@ -524,6 +680,8 @@ mod tests {
             reset_time: reset.map(str::to_string),
             cache_ttl: 60,
             no_cache: false,
+            save: false,
+            hyper_api_key: None,
         }
     }
 
@@ -532,6 +690,7 @@ mod tests {
             work_days,
             daily_budget,
             reset_time: reset.map(str::to_string),
+            hyper_api_key: None,
         }
     }
 
