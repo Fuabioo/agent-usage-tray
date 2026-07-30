@@ -65,6 +65,14 @@ pub struct Config {
     /// optional zone — see the Hyper provider).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reset_time: Option<String>,
+    /// Size of the credit pool for agents whose API reports only a balance (currently Hyper):
+    /// permanent credits plus the recurring daily grant.
+    ///
+    /// The provider otherwise infers this from successive balances, which is an inference from a
+    /// single number and can drift — chiefly because a balance never says how much of it is the
+    /// day's grant. Setting it here states the ceiling outright. Absent means "keep inferring".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_credits: Option<u32>,
     /// Charm Hyper API key.
     ///
     /// Hyper is opt-in on the *presence* of a key, and until now the only place to put one was
@@ -134,6 +142,11 @@ impl Config {
         } else if patch.reset_time.is_some() {
             self.reset_time = patch.reset_time;
         }
+        if patch.clear_total_credits {
+            self.total_credits = None;
+        } else if patch.total_credits.is_some() {
+            self.total_credits = patch.total_credits;
+        }
         if patch.clear_hyper_api_key {
             self.hyper_api_key = None;
         } else if patch.hyper_api_key.is_some() {
@@ -202,6 +215,8 @@ pub struct Patch {
     pub clear_daily_budget: bool,
     pub reset_time: Option<String>,
     pub clear_reset_time: bool,
+    pub total_credits: Option<u32>,
+    pub clear_total_credits: bool,
     pub hyper_api_key: Option<String>,
     pub clear_hyper_api_key: bool,
 }
@@ -249,12 +264,14 @@ mod tests {
     #[test]
     fn parses_a_full_config() {
         let c = Config::parse(
-            r#"{"work_days": 4, "daily_budget": 25.0, "reset_time": "08:00 local"}"#,
+            r#"{"work_days": 4, "daily_budget": 25.0, "reset_time": "08:00 local",
+                "total_credits": 1527}"#,
         )
         .unwrap();
         assert_eq!(c.work_days, Some(4));
         assert_eq!(c.daily_budget, Some(25.0));
         assert_eq!(c.reset_time.as_deref(), Some("08:00 local"));
+        assert_eq!(c.total_credits, Some(1527));
     }
 
     #[test]
@@ -308,6 +325,7 @@ mod tests {
             work_days: Some(5),
             daily_budget: Some(20.0),
             reset_time: Some("20:18".into()),
+            total_credits: Some(1600),
             hyper_api_key: Some("secret".into()),
         };
         c.merge(Patch {
@@ -317,6 +335,7 @@ mod tests {
         assert_eq!(c.work_days, Some(4));
         assert_eq!(c.daily_budget, Some(20.0));
         assert_eq!(c.reset_time.as_deref(), Some("20:18"));
+        assert_eq!(c.total_credits, Some(1600));
         assert_eq!(c.hyper_api_key.as_deref(), Some("secret"));
     }
 
@@ -325,6 +344,7 @@ mod tests {
     fn a_clear_flag_removes_a_field() {
         let mut c = Config {
             reset_time: Some("20:18".into()),
+            total_credits: Some(1600),
             hyper_api_key: Some("secret".into()),
             ..Default::default()
         };
@@ -334,6 +354,12 @@ mod tests {
         });
         assert_eq!(c.reset_time, None);
         assert_eq!(c.hyper_api_key.as_deref(), Some("secret"), "unrelated field survives");
+
+        c.merge(Patch {
+            clear_total_credits: true,
+            ..Default::default()
+        });
+        assert_eq!(c.total_credits, None);
 
         c.merge(Patch {
             clear_hyper_api_key: true,
@@ -362,6 +388,7 @@ mod tests {
             work_days: Some(4),
             daily_budget: None,
             reset_time: Some("08:00 local".into()),
+            total_credits: Some(1527),
             hyper_api_key: Some("secret".into()),
         };
         c.save_to(&path).unwrap();

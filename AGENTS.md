@@ -69,6 +69,12 @@ The macOS Swift app calls the CLI binary as a subprocess — it does **not** lin
 
 ### Caching (important gotchas)
 - **The cache stores raw `Usage`, not the rendered `Snapshot`.** On every call, the snapshot is recomputed from cached usage against the current `budget` and `now`. This means work-days changes and live countdowns still update even when the source isn't re-fetched.
+- **`fetched_at` is the *reading's* time, not the render's.** `build_snapshot` stamps `now`, which
+  is right only on a live fetch; both cache paths correct it with `Snapshot::with_fetched_at(now -
+  age)` from the age `cache::read` already returns. Getting this wrong is not cosmetic — an
+  hour-old cached reading that claims to have been fetched "now" is indistinguishable from a live
+  one, so a frontend presents stale numbers as current. An age that won't convert resolves to
+  `DateTime::MIN_UTC`, never to `now`: erring toward "fresh" is the direction that misleads.
 - Cache location: `~/.cache/agent-usage/<id>.json` (respects `$XDG_CACHE_HOME`).
 - Default TTL: 60 seconds (`--cache-ttl`). 0 disables fresh-cache reuse but still serves stale data on transient errors.
 - `--no-cache` disables both read and write entirely.
@@ -109,7 +115,7 @@ A second Claude Code login (e.g. a personal account under `$CLAUDE_CONFIG_DIR=~/
 
 When a `Pool` carries a `budget` (set via `Window::with_budget()`), consumption is measured against the recurring allowance rather than the full `total`. The part of `total` beyond `budget` is surplus — it only counts as "used" once the daily allowance is spent. This means `used_pct` can exceed 100% ("extra usage").
 
-- **Hyper**: `total` = permanent credits + 250 daily. `budget` = 250 (the daily recharge). Spending 100 of your 250 daily grant → 40% used. Spending 300 → 120% used (50 into surplus). The label is `"credits"` (a lowercase noun matching the other windows' convention) and the pool shows the raw balance.
+- **Hyper**: `total` = permanent credits + 250 daily. `budget` = 250 (the daily recharge). Spending 100 of your 250 daily grant → 40% used. Spending 300 → 120% used (50 into surplus). The label is `"credits"` (a lowercase noun matching the other windows' convention) and the pool shows the raw balance. `total` is inferred (see *Hyper's permanent-credit baseline*) unless `total_credits` states it.
 - **Without** `budget` (e.g. a pure consumable pool): `used_pct = (total - remaining) / total * 100` as before.
 
 ### Settings precedence and the CLI config file
@@ -120,8 +126,8 @@ Settings resolve **flag → environment → config file → built-in default** (
 - **Config file** (`core/src/config.rs`): `$XDG_CONFIG_HOME/agent-usage/config.json`, else
   `~/.config/agent-usage/config.json`. Deliberately the *config* dir, not the cache dir — this is
   authored state, not something the tool may discard. Keys mirror the long flags:
-  `work_days`, `daily_budget`, `reset_time`, `hyper_api_key`. Every field is optional; an absent
-  one means "no opinion" and falls through.
+  `work_days`, `daily_budget`, `reset_time`, `total_credits`, `hyper_api_key`. Every field is
+  optional; an absent one means "no opinion" and falls through.
 - **Written `0600`, via a temp file + rename.** It may hold an API key, so the mode is set
   explicitly rather than left to the umask (which yields world-readable — exactly how the same
   secret ends up exposed in a `~/.env`). The rename makes a crash mid-write unable to leave a
@@ -139,6 +145,11 @@ Settings resolve **flag → environment → config file → built-in default** (
 - **`daily_budget` defaults to `100 / work_days`**, not a flat 20. A flat default silently
   under-budgets any non-default split (`work_days = 4` at 20%/day only ever spends 80% of the
   cycle). This matches `AppSettings.dailyBudget` in the Swift app. The 5-day default is still 20.0.
+- **`total_credits` has no environment layer** (flag → config file → inferred). Unlike
+  `reset_time` there is no pre-existing exported variable whose meaning has to be preserved.
+  `--total-credits` parses through `CreditsArg`, so a malformed value is rejected by **clap** —
+  one loud failure at the argument instead of a silent fall back to the inferred pool. An empty
+  value means "no opinion", and under `config --save` clears the stored setting.
 - Resolution helpers that read the environment are split into a pure `*_from(...)` function taking
   the env value as an argument, so tests don't depend on (or mutate) process-global state — the
   same pattern as `core::cache::resolve_cache_dir`.
@@ -199,7 +210,17 @@ brake, so `core/src/history.rs` reconstructs one from successive readings.
 
 ### Swift app details
 - CLI binary resolution order: `$AGENT_USAGE_BIN` → `Bundle.resources/agent-usage` → sibling to the .app → `PATH` via `/usr/bin/env agent-usage`.
-- Settings persisted in `UserDefaults`: `workDays`, `appearance`, `disabledAgentIDs`, `menuBarMode`, `selectedAgentID`, `creditDisplay`, `hyperResetTime`, `claudeAccounts` (JSON-encoded `[ClaudeAccount]`).
+- Settings persisted in `UserDefaults`: `workDays`, `appearance`, `disabledAgentIDs`, `menuBarMode`, `selectedAgentID`, `creditDisplay`, `hyperResetTime`, `hyperTotalCredits`, `claudeAccounts` (JSON-encoded `[ClaudeAccount]`).
+- **`hyperTotalCredits` is validated in the app before it is passed on** (`hyperTotalCreditsArgument`:
+  a number, `""` for "keep inferring", or `nil` for "not a number yet"). The CLI rejects a
+  malformed `--total-credits` at the argument, which is right for a hand-run command but here
+  would fail the whole `all` run and blank *every* agent over a half-typed number — a bad
+  `--reset-time` only errors Hyper. A `nil` is withheld from `syncConfig` too, so an
+  in-progress value can't clear the stored one.
+- **Merged change-driven publishers drop first per source, not after the merge.** A `@Published`
+  publisher replays its current value to each new subscriber, so N merged settings emit N times at
+  subscription; a single `.dropFirst()` on the merge lets N-1 through and fires a clearing
+  `syncConfig(allowClear: true)` at launch off settings nobody touched.
 - **`hyperResetTime` must be passed as `--reset-time`, not left to the environment.** A `.app`
   launched from Finder inherits no shell profile, so `HYPER_RESET_TIME` exported in `.zshrc` is
   invisible to it and Hyper would silently fall back to midnight UTC. The Settings field is
@@ -208,6 +229,16 @@ brake, so `core/src/history.rs` reconstructs one from successive readings.
   reads `controller.agents`, **not** `merged`, because the stale fallback substitutes the last
   good snapshot for an errored agent and would swallow the parse error being edited.
 - **Extra Claude accounts** (`ClaudeAccount`: stable `claude-…` id + label + config dir + optional keychain-service override; `resolvedKeychainService` derives the service from the config dir). `DataController.runCLI` runs the built-in `all`, then one `agent-usage claude --json --id … --label … --config-dir … --keychain-service …` per account, appending each single snapshot. A base-`all` spawn/decode failure is fatal; an individual account that fails to spawn/decode is skipped (a per-agent *error document* decodes fine and is kept). `ClaudeAccount.makeID` derives a unique, `claude`-prefixed id so the account renders with the Claude-family glyph and never collides with the primary `claude`.
+- **Per-agent state is shown on the agent, not on the run.** Agents fail and recover independently,
+  so the dashboard puts both the refresh control and the "cached" badge on the agent they describe.
+  Each ring *is* its agent's refresh button (hover swaps the glyph for `arrow.clockwise`;
+  `DataController.refresh(agentID:)` runs `agent-usage <id>` — or `runClaudeAccount` for an extra
+  login, whose id is not a CLI subcommand — and splices the one result in via `applyOne`). The
+  footer's global Refresh stays for "re-ask everything".
+- **`merged` marks its substitutions stale.** When it swaps an errored agent for its last good
+  reading it sets `stale`/`staleReason` on the copy: the CLI's own stale flag can't cover this path
+  (the failure happened in the app), and an unmarked substitution renders an old reading as current.
+  This is why `AgentSnapshot.stale`/`staleReason` are `var`.
 - `creditDisplay` controls how credit pools are rendered in the menu bar and dashboard: `.credits` (raw balance like "1,620"), `.percentage` (remaining %), or `.both` ("1,620 · 98%").
 - Pace colors are adaptive (light/dark variants) via `NSColor(name: dynamicProvider:)`.
 - Agent logos are vector PDFs under `Resources/agents/<id>.pdf`. Hyper's diamond glyph is bundled; other agents fall back to SF Symbols defined in `Assets.symbolName(forID:)`. A secondary Claude account (`Assets.isSecondaryClaude`, any `claude`-prefixed id ≠ `claude`) maps to the derived `claude-alt` variant (the burst in a ring) so two Claude accounts never render an identical glyph.
@@ -219,6 +250,8 @@ The JSON snapshot is identical for all agents:
 ```jsonc
 {
   "agent": { "id": "...", "label": "...", "source": "..." },
+  // When the usage was OBTAINED, not when this document was rendered — a cached reading
+  // reports its real age. See `Snapshot::with_fetched_at`.
   "fetched_at": "...",
   "config": { "daily_budget": 20.0, "work_days": 5 },
   "windows": [{ "kind": "weekly|session|credits|other", "label": "...",
@@ -291,7 +324,16 @@ On failure: valid JSON with a non-null `error` object and exit code ≠ 0.
 12. **Only `Weekly` windows are sampled.** Session windows brake on their own and credit pools
     already carry a real `burn_per_day` from their provider, so neither is tracked.
 7. **`--status` output is NOT a stable contract** — it's human-readable. Only the JSON output is the stable contract.
-8. **Hyper permanent-credits cache** — Stored at `~/.cache/agent-usage/hyper.permanent.json` (uses `core::cache::cache_dir()` shared path). A `{ value, cycle }` record keyed by reset unix timestamp. On each new 24h cycle the permanent baseline is re-derived as `max(previous, balance - 250)` and persisted. Never goes below the last known value so a mid-cycle cold start doesn't undercount.
+8. **Hyper's permanent-credit baseline** — Stored at `~/.cache/agent-usage/hyper.permanent.json`
+   (uses `core::cache::cache_dir()` shared path). A `{ value, cycle }` record keyed by reset unix
+   timestamp. On each new 24h cycle it is re-derived as `max(previous, balance - 250)` — floored
+   at the last known value so a mid-cycle cold start doesn't undercount. **Every reading then
+   clamps it into `[balance - 250, balance]`** (`clamp_permanent`), the only band a balance
+   permits: permanent credits are part of the balance, and no more than one grant of the balance
+   can be non-permanent. The upper bound is what lets it come *down* — spending past the daily
+   grant eats permanent credits, and a floor-only baseline reported the pre-spend pool forever
+   (a 1600 pool stayed 1600 after an overspend left 1277, so every later day showed a phantom
+   deficit). `total_credits` bypasses the inference entirely, and is clamped into the same band.
 9. **Hyper's window has no `burn_per_day`** — The grant is fixed at 250/day, not an observed burn rate, so there's nothing to project. `depletes_before_reset` can still be `true` when the pool is nearly empty.
 10. **Malformed `HYPER_RESET_TIME` is a hard error** — returns `UsageError::Unsupported` so typos
     don't silently shift the reset to midnight UTC. A **bare `HH:MM` still means UTC**: never
@@ -302,3 +344,5 @@ On failure: valid JSON with a non-null `error` object and exit code ≠ 0.
     refresh is indistinguishable from a *credit purchase* — both are the balance jumping upward.
     Inferring the reset from balance jumps would mis-key the permanent baseline (`resolve_permanent`
     is keyed on the reset instant) every time credits are bought. It stays configured, not guessed.
+    The same one-number limit is why the pool size is only ever an inference, and why
+    `total_credits` exists to state it: the balance never says how much of itself is today's grant.

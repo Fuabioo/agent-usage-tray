@@ -103,6 +103,13 @@ struct Cli {
     #[arg(long, value_name = "HH:MM[ ZONE]")]
     reset_time: Option<String>,
 
+    /// Size of the credit pool, for agents whose API reports only a balance (currently `hyper`):
+    /// permanent credits plus the daily grant. Left unset the provider infers it from successive
+    /// balances; set it when you know the number and the inference has drifted. An empty value
+    /// clears the stored setting and goes back to inferring.
+    #[arg(long, value_name = "N")]
+    total_credits: Option<CreditsArg>,
+
     /// Seconds a cached snapshot stays fresh: repeated calls within this window reuse it instead
     /// of re-hitting the usage source. 0 disables reuse (but still serves stale on error).
     #[arg(long, default_value_t = 60, value_name = "SECS")]
@@ -122,6 +129,32 @@ struct Cli {
     /// process on the machine via `ps`. Pass an empty value to remove the stored key.
     #[arg(long, value_name = "KEY")]
     hyper_api_key: Option<String>,
+}
+
+/// A `--total-credits` value: a whole number of credits, or empty to mean "no opinion" (which
+/// under `config --save` clears the stored setting, the same way an empty `--reset-time` does).
+///
+/// Parsed by clap rather than downstream so a typo fails at the argument, once and loudly, instead
+/// of quietly reverting to the inferred pool — the same reason a malformed reset time is a hard
+/// error rather than a fallback to midnight.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CreditsArg(Option<u32>);
+
+impl std::str::FromStr for CreditsArg {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(CreditsArg(None));
+        }
+        trimmed
+            .parse::<u32>()
+            .map(|n| CreditsArg(Some(n)))
+            .map_err(|_| {
+                format!("expected a whole number of credits (or an empty value to clear), got {raw:?}")
+            })
+    }
 }
 
 fn main() {
@@ -217,6 +250,13 @@ fn config_patch(cli: &Cli) -> Result<agent_usage_core::config::Patch, UsageError
         }
     }
 
+    if let Some(CreditsArg(value)) = cli.total_credits {
+        match value {
+            Some(n) => patch.total_credits = Some(n),
+            None => patch.clear_total_credits = true,
+        }
+    }
+
     if let Some(raw) = cli.hyper_api_key.as_deref() {
         // `-` means "the key is on stdin", so a secret never lands in this process's argv where
         // any user on the machine could read it out of `ps`.
@@ -264,6 +304,12 @@ fn print_config(cli: &Cli, config: &Config) -> i32 {
             config.reset_time.clone().unwrap_or_else(|| "<unset>".into())
         );
         println!(
+            "total_credits= {}",
+            config
+                .total_credits
+                .map_or("<unset>".into(), |v| v.to_string())
+        );
+        println!(
             "hyper_api_key= {}",
             if config.hyper_api_key.is_some() {
                 "<set>"
@@ -280,6 +326,7 @@ fn print_config(cli: &Cli, config: &Config) -> i32 {
         "work_days": config.work_days,
         "daily_budget": config.daily_budget,
         "reset_time": config.reset_time,
+        "total_credits": config.total_credits,
         "hyper_api_key_set": config.hyper_api_key.is_some(),
     });
     print_json(&doc);
@@ -409,7 +456,9 @@ fn agent_json(
             if age < Duration::from_secs(cli.cache_ttl) {
                 apply_identity(&mut usage.agent, id_override, label_override);
                 let trend = track_trend(cli, cache_id, &usage, now, false);
-                let snap = output::build_snapshot(&usage, budget, now).with_trend(trend, budget);
+                let snap = output::build_snapshot(&usage, budget, now)
+                    .with_fetched_at(fetched_at(now, age))
+                    .with_trend(trend, budget);
                 return (serde_json::to_value(&snap).unwrap_or(Value::Null), 0);
             }
         }
@@ -429,12 +478,13 @@ fn agent_json(
         Err(err) => {
             // Serve last good usage on a transient failure, recomputed and marked stale.
             if use_cache && is_transient(&err) {
-                if let Some((_, mut usage)) = read_cached_usage(cache_id) {
+                if let Some((age, mut usage)) = read_cached_usage(cache_id) {
                     apply_identity(&mut usage.agent, id_override, label_override);
                     // Stale data is a repeat of an old reading, so it is read-only here too.
                     let trend = track_trend(cli, cache_id, &usage, now, false);
-                    let mut snap =
-                        output::build_snapshot(&usage, budget, now).with_trend(trend, budget);
+                    let mut snap = output::build_snapshot(&usage, budget, now)
+                        .with_fetched_at(fetched_at(now, age))
+                        .with_trend(trend, budget);
                     snap.stale = Some(true);
                     snap.stale_reason = Some(err.to_string());
                     return (serde_json::to_value(&snap).unwrap_or(Value::Null), 0);
@@ -478,6 +528,20 @@ fn track_trend(
         history::store(id, &series);
     }
     series.trend(now, window.used_pct(), window.resets_at)
+}
+
+/// When a cached reading was taken: `now` minus its age on disk.
+///
+/// Saturates at `now` rather than propagating a conversion failure — an age that won't convert
+/// (negative, absurdly large) means the clock or the file's mtime is untrustworthy, and claiming
+/// the reading is current is the *optimistic* answer, so it is the one to avoid. Falling back to
+/// `now` here would restore exactly the overstated freshness this exists to fix, so an unusable
+/// age reports the reading as maximally old instead.
+fn fetched_at(now: chrono::DateTime<Utc>, age: Duration) -> chrono::DateTime<Utc> {
+    match chrono::Duration::from_std(age) {
+        Ok(d) => now - d,
+        Err(_) => chrono::DateTime::<Utc>::MIN_UTC,
+    }
 }
 
 fn read_cached_usage(id: &str) -> Option<(Duration, agent_usage_core::Usage)> {
@@ -586,6 +650,16 @@ fn resolve_reset_time_from(
         .find(|s| !s.is_empty())
 }
 
+/// The credit-pool size: the flag first, then the config file, else `None` (leave the provider to
+/// infer it). No environment layer — unlike `reset_time` there is no exported variable predating
+/// the config file whose meaning has to be preserved.
+fn resolve_total_credits(cli: &Cli, config: &Config) -> Option<u32> {
+    cli.total_credits
+        .as_ref()
+        .and_then(|c| c.0)
+        .or(config.total_credits)
+}
+
 fn fetch_options(cli: &Cli, config: &Config) -> FetchOptions {
     FetchOptions {
         creds_path: cli.creds_path.as_deref().map(expand_tilde),
@@ -595,6 +669,7 @@ fn fetch_options(cli: &Cli, config: &Config) -> FetchOptions {
         keychain_account: cli.keychain_account.clone(),
         no_keychain: cli.no_keychain,
         reset_time: resolve_reset_time(cli, config),
+        total_credits: resolve_total_credits(cli, config),
         api_key: resolve_hyper_api_key(config),
     }
 }
@@ -678,6 +753,7 @@ mod tests {
             keychain_service: None,
             no_keychain: false,
             reset_time: reset.map(str::to_string),
+            total_credits: None,
             cache_ttl: 60,
             no_cache: false,
             save: false,
@@ -690,6 +766,7 @@ mod tests {
             work_days,
             daily_budget,
             reset_time: reset.map(str::to_string),
+            total_credits: None,
             hyper_api_key: None,
         }
     }
@@ -797,5 +874,77 @@ mod tests {
             Some("08:00 local")
         );
         assert_eq!(resolve_reset_time_from(None, None, None), None);
+    }
+
+    /// A cached reading must report when it was *taken*, not when it was re-rendered — the whole
+    /// point of the field for a consumer deciding whether to trust the numbers.
+    #[test]
+    fn a_cached_reading_reports_its_real_age() {
+        let now = Utc::now();
+        assert_eq!(fetched_at(now, Duration::from_secs(0)), now);
+        assert_eq!(
+            fetched_at(now, Duration::from_secs(600)),
+            now - chrono::Duration::seconds(600)
+        );
+        // An age that won't convert must not read as fresh: erring toward "current" is the one
+        // direction that misleads.
+        assert!(fetched_at(now, Duration::from_secs(u64::MAX)) < now);
+    }
+
+    #[test]
+    fn a_total_credits_flag_overrides_the_config_file() {
+        let mut cli = cli_with(None, None, None);
+        cli.total_credits = Some(CreditsArg(Some(1527)));
+        let mut config = config_with(None, None, None);
+        config.total_credits = Some(1600);
+        assert_eq!(resolve_total_credits(&cli, &config), Some(1527));
+    }
+
+    /// The app passes the field through on every run, so an empty one must fall through to the
+    /// config file rather than shadowing it — the same contract an empty `--reset-time` has.
+    #[test]
+    fn a_blank_total_credits_falls_through_to_the_config_file() {
+        let mut cli = cli_with(None, None, None);
+        cli.total_credits = Some(CreditsArg(None));
+        let mut config = config_with(None, None, None);
+        config.total_credits = Some(1600);
+        assert_eq!(resolve_total_credits(&cli, &config), Some(1600));
+        assert_eq!(
+            resolve_total_credits(&cli, &config_with(None, None, None)),
+            None,
+            "nothing anywhere means the provider keeps inferring"
+        );
+    }
+
+    #[test]
+    fn total_credits_parses_a_whole_number_or_a_clear() {
+        use std::str::FromStr;
+        assert_eq!(CreditsArg::from_str("1527"), Ok(CreditsArg(Some(1527))));
+        assert_eq!(CreditsArg::from_str("  1527 "), Ok(CreditsArg(Some(1527))));
+        assert_eq!(CreditsArg::from_str(""), Ok(CreditsArg(None)));
+        assert_eq!(CreditsArg::from_str("   "), Ok(CreditsArg(None)));
+        for bad in ["1527.5", "-10", "many", "1_527"] {
+            assert!(CreditsArg::from_str(bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
+
+    /// An emptied field is how the app says "go back to inferring", so it has to clear rather
+    /// than be ignored — the third state a bare `Option` can't carry.
+    #[test]
+    fn an_empty_total_credits_clears_it_on_save() {
+        let mut cli = cli_with(None, None, None);
+        cli.total_credits = Some(CreditsArg(Some(1527)));
+        let patch = config_patch(&cli).unwrap();
+        assert_eq!(patch.total_credits, Some(1527));
+        assert!(!patch.clear_total_credits);
+
+        cli.total_credits = Some(CreditsArg(None));
+        let patch = config_patch(&cli).unwrap();
+        assert_eq!(patch.total_credits, None);
+        assert!(patch.clear_total_credits);
+
+        cli.total_credits = None;
+        let patch = config_patch(&cli).unwrap();
+        assert!(patch.total_credits.is_none() && !patch.clear_total_credits);
     }
 }

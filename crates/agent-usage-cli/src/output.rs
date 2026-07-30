@@ -16,6 +16,10 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct Snapshot {
     pub agent: AgentDto,
+    /// When the underlying usage was actually obtained from the source — **not** when this
+    /// document was rendered. The two differ on every cache path, and a snapshot recomputed from
+    /// an hour-old cached reading that claims to have been fetched "now" is how a frontend ends up
+    /// presenting stale numbers as current. See [`Snapshot::with_fetched_at`].
     pub fetched_at: DateTime<Utc>,
     pub config: ConfigDto,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -241,6 +245,18 @@ pub fn build_snapshot(usage: &Usage, budget: &Budget, now: DateTime<Utc>) -> Sna
 }
 
 impl Snapshot {
+    /// Correct `fetched_at` to when the reading was really taken.
+    ///
+    /// [`build_snapshot`] stamps `now`, which is right only when the usage was just fetched. Every
+    /// cache path — a fresh hit, a stale fallback — recomputes the snapshot from a reading taken
+    /// earlier, and the age is exactly what the cache already returns and used to discard. Without
+    /// this a consumer cannot distinguish a live reading from an hour-old one, because the document
+    /// claims the same freshness either way.
+    pub fn with_fetched_at(mut self, fetched_at: DateTime<Utc>) -> Self {
+        self.fetched_at = fetched_at;
+        self
+    }
+
     /// Attach a sampled trend, coloring its burst against the snapshot's own daily budget.
     /// Kept separate from [`build_snapshot`] because the trend comes from persisted history,
     /// which is the caller's concern — a snapshot is buildable without ever touching disk.

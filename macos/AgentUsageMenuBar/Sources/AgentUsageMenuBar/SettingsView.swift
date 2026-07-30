@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// The settings window content. A focused subset of the prototype's settings: appearance, the
-/// work-days pace budget, and per-agent enable toggles. (The prototype's menu-bar display modes
-/// and notification toggles are a later refinement.)
+/// The settings window content, ordered widest-scope first: what the menu bar shows, appearance,
+/// the work-days pace budget, and which agents are on — then, at the bottom, a block per agent for
+/// the settings only that agent has. Agent blocks go last because most of them are things one
+/// provider's API can't report rather than preferences, and reading them alongside app-wide
+/// settings is what made the window feel arbitrary.
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var controller: DataController
@@ -52,30 +54,6 @@ struct SettingsView: View {
                     }
                 }
             }
-
-            Divider()
-
-            row("Credits show") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Picker("", selection: $settings.creditDisplay) {
-                        ForEach(AppSettings.CreditDisplay.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 260)
-                    Text("How credit pools like Hyper read out their balance.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Divider()
-
-            row("Credits reset") { creditsResetField }
-
-            Divider()
-
-            row("Hyper key") { hyperKeyField }
 
             Divider()
 
@@ -133,14 +111,62 @@ struct SettingsView: View {
             }
             Divider()
 
-            row("Claude accounts") {
-                claudeAccountsSection
-            }
+            // Everything below belongs to one agent. It sits at the bottom because it only means
+            // anything if you run that agent, where everything above shapes the app itself.
+            agentHeader("claude", "Claude Code")
+
+            row("Accounts") { claudeAccountsSection }
+
+            Divider()
+
+            agentHeader("hyper", "Charm Hyper")
+
+            Text("Hyper's API answers with a bare balance — no reset instant, no pool size — so "
+                 + "both have to be told here.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 26)
+
+            row("API key") { hyperKeyField }
+
+            row("Credits reset") { creditsResetField }
+
+            row("Credits total") { creditsTotalField }
+
+            row("Credits show") { creditsDisplayField }
         }
         .padding(20)
         .frame(width: 460, alignment: .leading)
         }
-        .frame(width: 460, height: 520)
+        .frame(width: 460, height: 640)
+    }
+
+    /// The heading for one agent's own settings: its glyph and name, so the block below reads as
+    /// belonging to that agent rather than as more app-wide preferences.
+    private func agentHeader(_ agentID: String, _ title: String) -> some View {
+        HStack(spacing: 8) {
+            AgentGlyphView(agentID: agentID, nsColor: .labelColor, size: 16)
+                .frame(width: 18, height: 18)
+            Text(title).font(.callout).bold()
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// How credit pools read out their balance. Grouped under Hyper because it is the only agent
+    /// that has one, though the setting itself is about pools rather than about Hyper.
+    private var creditsDisplayField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("", selection: $settings.creditDisplay) {
+                ForEach(AppSettings.CreditDisplay.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 260)
+            Text("How a credit pool reads out its balance.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     /// Manage extra Claude Code logins: a row per configured account plus a small add form.
@@ -166,6 +192,7 @@ struct SettingsView: View {
                         Image(systemName: "trash")
                     }
                     .buttonStyle(.borderless)
+                    .pointingHandCursor()
                     .help("Remove this account")
                 }
                 .frame(width: 300)
@@ -220,6 +247,7 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
     }
 
     /// When Hyper's daily credits refresh. Its API reports only a balance — no reset instant — so
@@ -266,6 +294,46 @@ struct SettingsView: View {
         }
     }
 
+    /// The size of Hyper's credit pool. Its API returns a bare balance, so the CLI has to infer
+    /// the ceiling that balance sits in — from how the balance moves across daily refreshes. That
+    /// inference is good but not infallible (a purchase and a refresh look alike, and a balance
+    /// never says how much of itself is the day's grant), so this states it outright.
+    private var creditsTotalField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField(creditsTotalPlaceholder, text: $settings.hyperTotalCredits)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+            Text("Permanent credits plus the daily grant — the number your balance is shown "
+                 + "against. Leave empty to let it be inferred from the balance.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            creditsTotalFeedback
+        }
+    }
+
+    /// The pool currently in effect, so the field shows what it would be replacing.
+    private var creditsTotalPlaceholder: String {
+        guard let total = controller.merged
+            .first(where: { $0.agent.id == "hyper" })?.window("credits")?.pool?.total
+        else { return "e.g. 1600" }
+        return formatCredits(total)
+    }
+
+    @ViewBuilder
+    private var creditsTotalFeedback: some View {
+        if settings.hyperTotalCreditsArgument == nil {
+            Text("Whole numbers only — the previous value stays in effect until this one parses.")
+                .font(.caption)
+                .foregroundStyle(PaceColor.red.swiftUIColor)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if settings.hyperTotalCredits.trimmingCharacters(in: .whitespaces).isEmpty {
+            Text("Inferred — corrects itself as the balance refreshes.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
     /// The Charm Hyper API key. Stored by the CLI in its `0600` config file, not here — an app
     /// started by launchd at login inherits no shell profile, so a `HYPER_API_KEY` export is
     /// invisible to it and Hyper would drop off the menu bar after every reboot.
@@ -275,10 +343,12 @@ struct SettingsView: View {
     private var hyperKeyField: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
+                // Narrower than the other fields: this row also carries Save and Remove, and at
+                // 200 the trailing button clipped to "Re…".
                 SecureField(controller.hyperKeyIsSet ? "•••••••• (stored)" : "hyper_…",
                             text: $hyperKeyEntry)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 200)
+                    .frame(width: 150)
                 Button("Save") { saveHyperKey(hyperKeyEntry) }
                     .disabled(hyperKeyEntry.trimmingCharacters(in: .whitespaces).isEmpty)
                 if controller.hyperKeyIsSet {

@@ -13,8 +13,13 @@
 //! permanent-credit count: each 24h cycle (keyed by its reset instant) we re-derive
 //! it as `max(0, balance - 250)`, but never below the last known baseline — permanent
 //! credits persist across cycles, so a mid-cycle cold start (when `balance` no longer
-//! reflects a full daily grant) must not undercount them. The baseline is cached in
+//! reflects a full daily grant) must not undercount them. Every reading then clamps the
+//! baseline into the only band the balance permits (see [`clamp_permanent`]), so a baseline
+//! that has gone wrong heals instead of persisting. The baseline is cached in
 //! `~/.cache/agent-usage/hyper.permanent.json`.
+//!
+//! All of that is still an inference from one number, so [`FetchOptions::total_credits`] can
+//! state the pool outright and skip it.
 //!
 //! The reset moment comes from [`FetchOptions::reset_time`] (the CLI's `--reset-time`, which the
 //! macOS Settings window drives) or, when unset, the `HYPER_RESET_TIME` env var. Either is `HH:MM`
@@ -104,7 +109,8 @@ impl Provider for Hyper {
             .unwrap_or_else(|| std::env::var("HYPER_RESET_TIME").unwrap_or_default());
         let resets_at = next_reset(now, parse_reset_time(&raw)?);
 
-        let permanent = resolve_permanent("hyper", balance, resets_at.timestamp());
+        let permanent =
+            resolve_permanent("hyper", balance, resets_at.timestamp(), opts.total_credits);
 
         let total = permanent as f64 + DAILY as f64;
         let remaining = balance as f64;
@@ -306,15 +312,31 @@ fn parse_offset(raw: &str) -> Option<FixedOffset> {
 }
 
 /// Resolve the permanent-credit baseline for `balance` in the cycle identified by
-/// `cycle` (the reset instant, unix seconds). Within a known cycle the cached value is
-/// reused; on a new (or uncached) cycle we re-derive it but never drop below the last
-/// known baseline (see [`derive_permanent`]), then persist it. The cache write is
-/// best-effort — a failure just means we re-derive on the next fetch.
-fn resolve_permanent(id: &str, balance: i64, cycle: i64) -> u32 {
+/// `cycle` (the reset instant, unix seconds).
+///
+/// A configured total wins outright. Otherwise: within a known cycle the cached value is reused,
+/// and on a new (or uncached) cycle it is re-derived from the balance but never dropped below the
+/// last known baseline (see [`derive_permanent`]). Either way the result is clamped into the band
+/// the balance permits, so a baseline that has drifted corrects itself on the next reading rather
+/// than being carried forever. The cache write is best-effort — a failure just means we re-derive
+/// on the next fetch.
+fn resolve_permanent(id: &str, balance: i64, cycle: i64, configured_total: Option<u32>) -> u32 {
+    if let Some(total) = configured_total {
+        return clamp_permanent(total.saturating_sub(DAILY as u32), balance);
+    }
+
     let stored = perm::read(id);
     if let Some(r) = &stored {
         if r.cycle == cycle {
-            return r.value;
+            // Re-checked even inside a known cycle: spending past the day's grant eats into
+            // permanent credits, so a cached baseline the balance can no longer support is stale,
+            // not authoritative. Without this the baseline could only ever rise, and a single
+            // overspend would inflate `total` for good.
+            let value = clamp_permanent(r.value, balance);
+            if value != r.value {
+                perm::write(id, &perm::Record { value, cycle });
+            }
+            return value;
         }
     }
     let value = derive_permanent(stored.map_or(0, |r| r.value), balance);
@@ -324,9 +346,25 @@ fn resolve_permanent(id: &str, balance: i64, cycle: i64) -> u32 {
 
 /// New-cycle baseline: `balance - DAILY` (exact only at reset, when the grant is full),
 /// floored at the previously known baseline so a mid-cycle cold start cannot undercount
-/// permanent credits, and at zero.
+/// permanent credits.
 fn derive_permanent(previous: u32, balance: i64) -> u32 {
-    previous.max((balance - DAILY).max(0) as u32)
+    clamp_permanent(previous, balance)
+}
+
+/// Clamp a permanent-credit baseline into the only band `balance` allows.
+///
+/// Two invariants bound it, and both are what make a wrong baseline recoverable from the single
+/// number the API reports:
+/// - **At most `balance`** — permanent credits are part of the balance, so a baseline above it
+///   describes credits that are not there. This is the direction the old floor could not walk
+///   back: spending past the daily grant consumes permanent credits, and a baseline that only
+///   ever rose kept reporting the pre-spend pool.
+/// - **At least `balance - DAILY`** — no more than one daily grant of the balance can be
+///   non-permanent, so anything above that much is permanent by definition.
+fn clamp_permanent(value: u32, balance: i64) -> u32 {
+    let low = (balance - DAILY).max(0) as u32;
+    let high = balance.max(0) as u32;
+    value.clamp(low, high)
 }
 
 /// Tiny permanent-credits baseline cache, stored alongside the main snapshot cache and
@@ -568,11 +606,61 @@ mod tests {
     fn permanent_derivation_floors_at_previous_and_zero() {
         // At reset the grant is full, so balance - DAILY recovers permanent exactly.
         assert_eq!(derive_permanent(0, 610), 360);
-        // Mid-cycle cold start (balance below a full grant) keeps the known baseline.
-        assert_eq!(derive_permanent(360, 200), 360);
+        // Mid-cycle cold start (part of the grant spent) keeps the known baseline.
+        assert_eq!(derive_permanent(360, 500), 360);
         // Nothing known and balance below the grant: zero, never negative.
         assert_eq!(derive_permanent(0, 200), 0);
         // A balance proving more permanent than we knew raises the baseline.
         assert_eq!(derive_permanent(100, 610), 360);
+    }
+
+    /// The balance is the only ground truth there is, and it bounds the baseline from both
+    /// sides. The upper bound is the one that matters in practice: without it, spending past the
+    /// daily grant leaves a baseline describing credits that are already gone.
+    #[test]
+    fn a_baseline_the_balance_cannot_support_is_lowered() {
+        // 1350 permanent + a 250 grant = a 1600 pool; spending 323 of it leaves 1277 in total,
+        // which is therefore all the permanent credit that can still exist.
+        assert_eq!(clamp_permanent(1350, 1277), 1277);
+        // Below the floor it rises: at least `balance - DAILY` of a balance is permanent.
+        assert_eq!(clamp_permanent(100, 610), 360);
+        // Inside the band it is left alone — that is where the cached baseline carries the
+        // information the balance cannot.
+        assert_eq!(clamp_permanent(500, 610), 500);
+        // Never negative, whatever the balance.
+        assert_eq!(clamp_permanent(400, 0), 0);
+    }
+
+    /// The arc a floor-only baseline could not walk: a 1600 pool (1350 permanent + the grant),
+    /// an overspend past the grant, then the next refresh. The overspend is the whole point —
+    /// permanent credits really did go down, and a baseline that only rises reports the pool the
+    /// user had *before* it for every day after.
+    #[test]
+    fn an_overspend_shrinks_the_pool_instead_of_haunting_it() {
+        // Spent 323 against a 250 grant: 73 of the 1350 permanent are gone, so 1277 is both the
+        // balance and all the permanent credit left.
+        let permanent = clamp_permanent(1350, 1277);
+        assert_eq!(permanent, 1277);
+        assert_eq!(permanent as i64 + DAILY, 1527, "the pool shrank with the spend");
+
+        // Next refresh: the grant is whole again, and the day starts at zero used rather than
+        // carrying the 73 as a phantom deficit against a pool that no longer exists.
+        let balance = permanent as i64 + DAILY;
+        let next = derive_permanent(permanent, balance);
+        assert_eq!(next, 1277);
+        assert_eq!(next as i64 + DAILY - balance, 0);
+    }
+
+    /// A configured total states the pool outright, but is still bounded by the balance: one set
+    /// below what is actually held would render a pool smaller than its own contents.
+    #[test]
+    fn a_configured_total_overrides_the_inference() {
+        let cycle = 1_785_508_200;
+        // 1527 total = 1277 permanent + the 250 grant, and the balance can support it.
+        assert_eq!(resolve_permanent("hyper-test-cfg", 1277, cycle, Some(1527)), 1277);
+        // A total below the balance (credits were bought since) yields to the balance.
+        assert_eq!(resolve_permanent("hyper-test-cfg", 3000, cycle, Some(1527)), 2750);
+        // A total under one grant is a pool of nothing but the grant.
+        assert_eq!(resolve_permanent("hyper-test-cfg", 100, cycle, Some(200)), 0);
     }
 }

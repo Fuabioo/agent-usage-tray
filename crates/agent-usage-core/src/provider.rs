@@ -42,6 +42,10 @@ pub struct FetchOptions {
     /// the Hyper provider. Takes precedence over whatever environment variable the provider would
     /// otherwise read, so a GUI can own the setting instead of requiring a shell export.
     pub reset_time: Option<String>,
+    /// Size of the credit pool for agents whose API reports only a balance (currently Hyper):
+    /// permanent credits plus the recurring daily grant. `None` leaves the provider to infer it
+    /// from successive balances, which is all it can do unaided and which can drift.
+    pub total_credits: Option<u32>,
 }
 
 impl Default for FetchOptions {
@@ -54,6 +58,7 @@ impl Default for FetchOptions {
             keychain_account: None,
             no_keychain: false,
             reset_time: None,
+            total_credits: None,
             api_key: None,
         }
     }

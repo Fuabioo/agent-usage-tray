@@ -124,7 +124,7 @@ final class StatusItemController {
         if settingsWindow == nil {
             let view = SettingsView(settings: settings, controller: controller)
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 640),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = "Agent Usage Settings"
             window.contentView = NSHostingView(rootView: view)

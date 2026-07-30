@@ -3,7 +3,8 @@ import SwiftUI
 /// The popover dashboard — reproduces the prototype: "Today's pace" header, a ring gauge per
 /// agent, alert banners for any credit pool projected to run dry or multi-day budget on course to
 /// be spent early, per-agent detail rows, and a footer with the last update, Refresh, and a
-/// settings gear.
+/// settings gear. Anything that is true of one agent rather than of the run — a cached reading, a
+/// refresh in flight — is shown on that agent, since agents fail and recover independently.
 struct DashboardView: View {
     @ObservedObject var controller: DataController
     @ObservedObject var settings: AppSettings
@@ -42,7 +43,12 @@ struct DashboardView: View {
                     .padding(.vertical, 8)
             } else {
                 HStack(alignment: .top, spacing: 14) {
-                    ForEach(displayAgents) { AgentRingView(snapshot: $0) }
+                    ForEach(displayAgents) { snapshot in
+                        AgentRingView(
+                            snapshot: snapshot,
+                            isRefreshing: controller.refreshingAgentIDs.contains(snapshot.id),
+                            onRefresh: { controller.refresh(agentID: snapshot.id) })
+                    }
                     if displayAgents.count < 2 { Spacer(minLength: 0) }
                 }
 
@@ -78,29 +84,23 @@ struct DashboardView: View {
         }
     }
 
+    // No global "Updated": with per-agent refresh it only ever reported whichever agent was asked
+    // last, and each agent now carries its own reading time.
     private var footer: some View {
         HStack(spacing: 8) {
-            if let updated = controller.lastUpdated {
-                Text("Updated \(updated.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            if displayAgents.contains(where: { $0.isStale }) {
-                Text("· cached")
-                    .font(.caption2)
-                    .foregroundStyle(PaceColor.yellow.swiftUIColor)
-                    .help("Showing the last good data — a refresh failed (rate limit or network).")
-            }
             Spacer()
             Button("Refresh") { controller.refresh(force: true) }
                 .buttonStyle(.borderless)
                 .font(.caption)
+                .pointingHandCursor()
+                .help("Refresh every agent")
             Button {
                 onOpenSettings()
             } label: {
                 Image(systemName: "gearshape")
             }
             .buttonStyle(.borderless)
+            .pointingHandCursor()
             .help("Settings")
         }
     }
@@ -108,8 +108,15 @@ struct DashboardView: View {
 
 // MARK: - Ring gauge
 
+/// One agent's ring — and its refresh control. The ring *is* the button: hovering swaps the
+/// agent's glyph for a refresh arrow, so the affordance costs no extra chrome in a popover that
+/// has none to spare, and it lands on the thing being refreshed rather than beside it.
 private struct AgentRingView: View {
     let snapshot: AgentSnapshot
+    let isRefreshing: Bool
+    let onRefresh: () -> Void
+
+    @State private var hovering = false
 
     /// What the ring reports: today's pace headroom (`ceiling − used`), gauged against one
     /// day's budget. A full ring means "a whole day's allowance still available"; empty/over
@@ -172,39 +179,63 @@ private struct AgentRingView: View {
             ? AnyShapeStyle(Color.secondary.opacity(0.4))
             : (m.isSurplus ? AnyShapeStyle(mintRing) : AnyShapeStyle(color))
 
-        VStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .stroke(Color.secondary.opacity(0.18), lineWidth: 5)
-                Circle()
-                    .trim(from: 0, to: m.isError ? 1 : m.fraction)
-                    .stroke(ringStyle, style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    // Golden glow when you're a full day or more ahead of pace (surplus).
-                    .shadow(color: m.isSurplus ? color.opacity(0.8) : .clear, radius: 5)
-                    .shadow(color: m.isSurplus ? color.opacity(0.5) : .clear, radius: 9)
-                AgentGlyphView(agentID: snapshot.agent.id,
-                               nsColor: m.isError ? .secondaryLabelColor : m.nsColor,
-                               size: 24)
-            }
-            .frame(width: 52, height: 52)
+        Button(action: onRefresh) {
+            VStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.18), lineWidth: 5)
+                    Circle()
+                        .trim(from: 0, to: m.isError ? 1 : m.fraction)
+                        .stroke(ringStyle, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        // Golden glow when you're a full day or more ahead of pace (surplus).
+                        .shadow(color: m.isSurplus ? color.opacity(0.8) : .clear, radius: 5)
+                        .shadow(color: m.isSurplus ? color.opacity(0.5) : .clear, radius: 9)
+                    ringCenter(m, color: color)
+                }
+                .frame(width: 52, height: 52)
 
-            Text(m.caption)
-                .font(.caption).bold()
-                .foregroundStyle(m.isError ? Color.secondary : color)
-                .lineLimit(1)
-            Text(snapshot.agent.label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            if let pace = snapshot.pace, !snapshot.isError {
-                Text("day \(pace.workDayIndex)/\(snapshot.config.workDays)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                Text(m.caption)
+                    .font(.caption).bold()
+                    .foregroundStyle(m.isError ? Color.secondary : color)
                     .lineLimit(1)
+                Text(snapshot.agent.label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let pace = snapshot.pace, !snapshot.isError {
+                    Text("day \(pace.workDayIndex)/\(snapshot.config.workDays)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .pointingHandCursor()
+        .help("Refresh \(snapshot.agent.label)")
+    }
+
+    /// The glyph at rest, a refresh arrow under the pointer, a spinner while the agent is being
+    /// re-asked. Tinted with the agent's own pace color throughout, so swapping it doesn't read as
+    /// the reading itself having changed.
+    @ViewBuilder
+    private func ringCenter(_ m: Model, color: Color) -> some View {
+        if isRefreshing {
+            ProgressView()
+                .controlSize(.small)
+        } else if hovering {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 21, weight: .medium))
+                .foregroundStyle(m.isError ? Color.secondary : color)
+        } else {
+            AgentGlyphView(agentID: snapshot.agent.id,
+                           nsColor: m.isError ? .secondaryLabelColor : m.nsColor,
+                           size: 24)
+        }
     }
 }
 
@@ -224,10 +255,37 @@ private struct AgentDetail: View {
             + ws.filter { $0.kind != "session" && $0.kind != "weekly" }
     }
 
+    /// How old this agent's reading is, and whether it's a fallback. Both come from the agent's
+    /// own snapshot: `fetchedAt` is when the CLI actually obtained the usage (not when it rendered
+    /// the document), so a cached reading shows its true age instead of claiming to be current.
+    @ViewBuilder
+    private var freshness: some View {
+        if snapshot.isStale {
+            Text("cached · \(formatAge(snapshot.fetchedAt))")
+                .font(.caption2)
+                .foregroundStyle(PaceColor.yellow.swiftUIColor)
+                .lineLimit(1)
+                .help(snapshot.staleReason
+                      ?? "Showing the last good reading — the latest refresh failed.")
+        } else {
+            Text(formatAge(snapshot.fetchedAt))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .help("Fetched \(localResetString(snapshot.fetchedAt))")
+        }
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Text(snapshot.agent.label)
-                .frame(width: 96, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(snapshot.agent.label)
+                // Per agent, not per popover: agents are fetched, fail and recover one at a time,
+                // so a footer badge said "something here is old" without saying which — and the
+                // refresh that fixes it is now per agent too.
+                if !snapshot.isError { freshness }
+            }
+            .frame(width: 106, alignment: .leading)
             if snapshot.isError || orderedWindows.isEmpty {
                 Text("error").foregroundStyle(.secondary)
                 Spacer(minLength: 0)

@@ -112,6 +112,14 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(hyperResetTime, forKey: Keys.hyperResetTime) }
     }
 
+    /// The size of Hyper's credit pool: permanent credits plus the daily grant. Its API reports
+    /// only a balance, so the CLI otherwise infers the pool from successive readings — an
+    /// inference that can drift, since a balance never says how much of itself is the day's grant.
+    /// Empty means "keep inferring"; a number states the ceiling outright.
+    @Published var hyperTotalCredits: String {
+        didSet { defaults.set(hyperTotalCredits, forKey: Keys.hyperTotalCredits) }
+    }
+
     /// Additional Claude Code logins to monitor alongside the primary account, each shown as its
     /// own agent (own id, glyph, and menu-bar segment). The app runs one extra `agent-usage claude`
     /// per account with `--id`/`--label`/`--config-dir` overrides so each resolves *its own* token.
@@ -130,6 +138,7 @@ final class AppSettings: ObservableObject {
         static let creditDisplay = "creditDisplay"
         static let claudeAccounts = "claudeAccounts"
         static let hyperResetTime = "hyperResetTime"
+        static let hyperTotalCredits = "hyperTotalCredits"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -145,6 +154,7 @@ final class AppSettings: ObservableObject {
         self.creditDisplay = CreditDisplay(rawValue: defaults.string(forKey: Keys.creditDisplay) ?? "")
             ?? .both
         self.hyperResetTime = defaults.string(forKey: Keys.hyperResetTime) ?? ""
+        self.hyperTotalCredits = defaults.string(forKey: Keys.hyperTotalCredits) ?? ""
         self.claudeAccounts = Self.loadClaudeAccounts(defaults)
     }
 
@@ -182,6 +192,18 @@ final class AppSettings: ObservableObject {
         // Drop any now-orphaned enable/selection state so it doesn't linger in UserDefaults.
         disabledAgentIDs.remove(id)
         if selectedAgentID == id { selectedAgentID = "" }
+    }
+
+    /// `hyperTotalCredits` in the form the CLI takes it: a whole number, or `""` meaning "no
+    /// opinion, keep inferring". `nil` when the field holds something that isn't a number at all.
+    ///
+    /// The app withholds a `nil` rather than passing it on. The CLI rejects a malformed value at
+    /// the argument — right for a hand-run command, but here it would fail the whole `all` run and
+    /// blank every agent over a half-typed number, where a bad reset time only errors Hyper.
+    var hyperTotalCreditsArgument: String? {
+        let trimmed = hyperTotalCredits.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return "" }
+        return UInt32(trimmed).map(String.init)
     }
 
     /// Expected percent consumed per work day, so a full week of work days totals 100%

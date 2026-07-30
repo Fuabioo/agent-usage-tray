@@ -24,16 +24,25 @@ change.
 ## Screenshots
 
 The menu bar shows each agent's `weekly · near-term %`, color-coded by pace; the dashboard popover
-adds per-agent ring gauges, reset countdowns, and burn-rate context. _(This example runs a
-multi-account, power-user setup — Codex, an opt-in [Charm Hyper](https://hyper.charm.land) credit
-pool, and a second "Personal" Claude login. A fresh install shows just Claude Code + Codex.)_
+adds per-agent ring gauges, reset countdowns, and burn-rate context. Anything true of one agent
+rather than of the run is shown on that agent: how old its reading is, a `cached` marker when it's
+a fallback, and a refresh — hover a ring and it becomes the button that re-asks just that agent.
+_(This example runs a multi-account, power-user setup — Codex, an opt-in
+[Charm Hyper](https://hyper.charm.land) credit pool, and a second "Personal" Claude login whose
+token has gone stale, which is why it reads `cached`. A fresh install shows just Claude Code +
+Codex.)_
 
 ![Menu bar indicator and dashboard popover](docs/images/menu-bar-and-dashboard.webp)
 
-Settings control what the menu bar shows, how credit pools read out, appearance, the work-day pace
-split, and which agents are enabled:
+Settings control what the menu bar shows, appearance, the work-day pace split, and which agents are
+enabled:
 
 ![Settings window](docs/images/settings.webp)
+
+Below those sit one block per agent, for the settings only that agent has — an extra Claude Code
+login, and everything Hyper's API can't report about itself:
+
+![Per-agent settings blocks](docs/images/settings-agent-sections.webp)
 
 ## Install
 
@@ -62,18 +71,24 @@ agent-usage all --status                       # human-readable report for every
 ```
 
 To add the opt-in [Charm Hyper](https://hyper.charm.land) credit pool, give it an API key — in the
-menu bar app that's **Settings → Hyper key**, for the CLI it's `agent-usage config --save
+menu bar app that's **Settings → Charm Hyper → API key**, for the CLI it's `agent-usage config --save
 --hyper-api-key -` (the key is read from stdin so it never appears in `ps`). It then joins `all`
 and the menu bar automatically. A `HYPER_API_KEY` export still works, but prefer the stored key:
 an app started at login inherits no shell profile, so an exported variable is invisible to it and
 Hyper would drop off the menu bar after every reboot.
 
 Hyper's API reports only a balance — no reset instant — so it has to be told when your daily
-credits refresh. In the menu bar app that's **Settings → Credits reset**; for the CLI it's the
+credits refresh. In the menu bar app that's **Settings → Charm Hyper → Credits reset**; for the CLI it's the
 config file (below), `--reset-time`, or the `HYPER_RESET_TIME` env var. The format is `HH:MM` plus
 an optional zone, where a bare value means UTC — `"08:00 local"` tracks 8am on your machine's clock
 through a DST change, where a hand-converted UTC value would drift an hour twice a year. Unset
 defaults to midnight UTC; a malformed value is a hard error rather than a silent fallback.
+
+For the same reason — a lone balance, with no way to tell how much of it is today's grant — the
+size of the pool that balance sits in is inferred from how it moves across refreshes. That is
+self-correcting but not omniscient, so it can also be stated outright: **Settings → Charm Hyper → Credits total**
+in the app, `--total-credits` or the config file for the CLI. It's permanent credits plus the daily
+grant — the number your balance is shown against. Leave it unset to keep inferring.
 
 ### Configuration
 
@@ -85,6 +100,7 @@ CLI's own baseline, so a frontend passing its settings as arguments always wins:
 {
   "work_days": 4,               // 1–7; daily_budget defaults to 100 / work_days
   "reset_time": "08:00 local",  // HH:MM + optional zone: `local`, `Z`, or ±HH:MM
+  "total_credits": 1600,        // credit-pool size; unset = infer it from the balance
   "hyper_api_key": "…"          // written by `config --save`, never printed back
 }
 ```

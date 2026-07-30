@@ -66,8 +66,13 @@ struct AgentSnapshot: Codable, Identifiable {
     /// How fast the multi-day window is burning. Absent until the CLI has sampled enough history.
     let trend: TrendDTO?
     let error: ErrorDTO?
-    /// Set by the CLI when it served a cached snapshot after a transient fetch failure.
-    let stale: Bool?
+    /// Set by the CLI when it served a cached snapshot after a transient fetch failure — and by
+    /// `DataController.merged` when the *app* substitutes an agent's last good reading for a
+    /// failed one. Both mean the same thing to a reader: these numbers are not current.
+    var stale: Bool?
+    /// Why the reading is cached (rate limit, network, the error that forced the substitution).
+    /// What makes a per-agent badge worth more than a global one: it names the agent and the cause.
+    var staleReason: String?
 
     var id: String { agent.id }
     var isError: Bool { error != nil }
@@ -226,6 +231,18 @@ func formatCredits(_ value: Double) -> String {
     f.numberStyle = .decimal
     f.maximumFractionDigits = 0
     return f.string(from: NSNumber(value: value)) ?? String(Int(value.rounded()))
+}
+
+/// How old a reading is, phrased for a glance: "just now", "12m ago", then the clock time once
+/// it's beyond an hour, where the exact moment is more use than a growing count of minutes.
+///
+/// The input is the CLI's `fetched_at`, which is when the usage was actually obtained — a cached
+/// reading reports its real age rather than the moment the snapshot was rendered.
+func formatAge(_ date: Date, now: Date = Date()) -> String {
+    let seconds = Int(now.timeIntervalSince(date))
+    if seconds < 45 { return "just now" }
+    if seconds < 3_600 { return "\(formatDuration(seconds: seconds)) ago" }
+    return date.formatted(date: .omitted, time: .shortened)
 }
 
 /// Short weekday like "Thu" for projection labels ("out ~Thu").

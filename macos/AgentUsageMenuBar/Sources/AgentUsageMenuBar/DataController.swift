@@ -17,7 +17,8 @@ final class DataController: ObservableObject {
     @Published private(set) var lastGood: [AgentSnapshot] = []
     /// A spawn/IO/decoding problem that isn't a CLI-reported error (e.g. binary missing).
     @Published private(set) var runtimeError: String?
-    @Published private(set) var lastUpdated: Date?
+    /// Agents with a single-agent refresh in flight, so the UI can show which one is working.
+    @Published private(set) var refreshingAgentIDs: Set<String> = []
 
     private let settings: AppSettings
     private var timer: Timer?
@@ -40,23 +41,30 @@ final class DataController: ObservableObject {
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
 
-        // Same for Hyper's reset time, debounced: it's typed a character at a time, and every
-        // intermediate value ("0", "08", "08:") would otherwise spawn a CLI run and flash a
-        // parse error. `force` bypasses the cache so the new reset takes effect immediately.
-        settings.$hyperResetTime
-            .dropFirst()
-            .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
-            .removeDuplicates()
-            .sink { [weak self] _ in self?.refresh(force: true) }
-            .store(in: &cancellables)
+        // Same for the two Hyper fields the API can't report, debounced: they're typed a character
+        // at a time, and every intermediate value ("0", "08", "08:") would otherwise spawn a CLI
+        // run and flash a parse error. `force` bypasses the cache so the new value takes effect
+        // immediately.
+        Publishers.Merge(
+            settings.$hyperResetTime.dropFirst().map { _ in () },
+            settings.$hyperTotalCredits.dropFirst().map { _ in () }
+        )
+        .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
+        .sink { [weak self] in self?.refresh(force: true) }
+        .store(in: &cancellables)
 
         // Mirror what the CLI can't derive into its config file, so `agent-usage` run by hand
         // agrees with the menu bar. Debounced for the same reason as above.
-        Publishers.Merge(
-            settings.$workDays.map { _ in () },
-            settings.$hyperResetTime.map { _ in () }
+        //
+        // Each source drops its own first element rather than the merge dropping one: a
+        // `@Published` publisher replays its current value to every new subscriber, so N merged
+        // sources emit N times at subscription and a single `dropFirst()` would let the rest
+        // through — firing a clearing sync at launch off settings nobody touched.
+        Publishers.Merge3(
+            settings.$workDays.dropFirst().map { _ in () },
+            settings.$hyperResetTime.dropFirst().map { _ in () },
+            settings.$hyperTotalCredits.dropFirst().map { _ in () }
         )
-        .dropFirst()
         .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
         .sink { [weak self] in self?.syncConfig(allowClear: true) }
         .store(in: &cancellables)
@@ -79,9 +87,15 @@ final class DataController: ObservableObject {
     func syncConfig(allowClear: Bool) {
         let workDays = settings.workDays
         let resetTime = settings.hyperResetTime.trimmingCharacters(in: .whitespaces)
+        // A field that isn't a number yet is withheld entirely — neither written nor cleared, so
+        // a half-typed value can't erase what's stored.
+        let totalCredits = settings.hyperTotalCreditsArgument
         var args = ["--work-days", String(workDays)]
         if allowClear || !resetTime.isEmpty {
             args += ["--reset-time", resetTime]
+        }
+        if let totalCredits, allowClear || !totalCredits.isEmpty {
+            args += ["--total-credits", totalCredits]
         }
         DispatchQueue.global(qos: .utility).async {
             _ = Self.runConfigSave(args: args, stdin: nil)
@@ -119,8 +133,13 @@ final class DataController: ObservableObject {
         let current = agents.isEmpty ? lastGood : agents
         return current.map { snap in
             guard snap.isError,
-                  let good = lastGood.first(where: { $0.id == snap.id && !$0.isError })
+                  var good = lastGood.first(where: { $0.id == snap.id && !$0.isError })
             else { return snap }
+            // Substituting an earlier reading is precisely what `stale` means, so mark it. The
+            // CLI's own stale flag doesn't cover this path — the failure happened here — and an
+            // unmarked substitution presents an old reading as the current one.
+            good.stale = true
+            good.staleReason = snap.error?.message
             return good
         }
     }
@@ -143,12 +162,74 @@ final class DataController: ObservableObject {
         let dailyBudget = settings.dailyBudget
         let accounts = settings.claudeAccounts
         let hyperReset = settings.hyperResetTime
+        // An unparseable field is left out so the CLI falls through to its config file, rather
+        // than failing the run over a value the user is still typing.
+        let hyperTotal = settings.hyperTotalCreditsArgument ?? ""
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let result = Self.runCLI(
                 decoder: self.decoder, workDays: workDays, dailyBudget: dailyBudget,
-                bypassCache: force, claudeAccounts: accounts, hyperResetTime: hyperReset)
+                bypassCache: force, claudeAccounts: accounts, hyperResetTime: hyperReset,
+                hyperTotalCredits: hyperTotal)
             DispatchQueue.main.async { self.apply(result) }
+        }
+    }
+
+    /// Refresh a single agent, live, leaving every other agent's reading as it was.
+    ///
+    /// Worth having because agents don't fail or recover together: one is rate-limited, one was
+    /// just topped up, one has a token that needs its own `claude` to refresh it. The CLI is
+    /// already per-agent (`agent-usage <id>`), so this is one cheap process rather than a sweep.
+    /// Always bypasses the cache — it is only ever reached by someone explicitly asking.
+    func refresh(agentID: String) {
+        guard !refreshingAgentIDs.contains(agentID) else { return }
+        let workDays = settings.workDays
+        let dailyBudget = settings.dailyBudget
+        let hyperReset = settings.hyperResetTime
+        let hyperTotal = settings.hyperTotalCreditsArgument ?? ""
+        // An extra Claude login is not a CLI subcommand — it is the `claude` provider run with
+        // that account's identity and config dir, exactly as the full sweep runs it.
+        let account = settings.claudeAccounts.first { $0.id == agentID }
+
+        refreshingAgentIDs.insert(agentID)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let snap = account.map {
+                Self.runClaudeAccount($0, decoder: self.decoder, workDays: workDays,
+                                      dailyBudget: dailyBudget, bypassCache: true)
+            } ?? Self.runSingleAgent(agentID, decoder: self.decoder, workDays: workDays,
+                                     dailyBudget: dailyBudget, hyperResetTime: hyperReset,
+                                     hyperTotalCredits: hyperTotal)
+            DispatchQueue.main.async {
+                self.refreshingAgentIDs.remove(agentID)
+                guard let snap else {
+                    self.runtimeError = "failed to refresh \(agentID)"
+                    return
+                }
+                self.applyOne(snap)
+            }
+        }
+    }
+
+    /// Splice one agent's fresh reading into the published set, leaving the others alone.
+    ///
+    /// A good reading updates that agent's entry in `lastGood` too, so the per-agent stale
+    /// fallback keeps standing behind it — `merged` looks an agent up by id, not by which run
+    /// produced it.
+    private func applyOne(_ snap: AgentSnapshot) {
+        // `merged` shows `lastGood` while `agents` is empty, so seed from it rather than let a
+        // single-agent result become the whole dashboard after a failed sweep.
+        if agents.isEmpty { agents = lastGood }
+        Self.upsert(&agents, snap)
+        if !snap.isError { Self.upsert(&lastGood, snap) }
+        runtimeError = nil
+    }
+
+    private static func upsert(_ snapshots: inout [AgentSnapshot], _ snap: AgentSnapshot) {
+        if let existing = snapshots.firstIndex(where: { $0.id == snap.id }) {
+            snapshots[existing] = snap
+        } else {
+            snapshots.append(snap)
         }
     }
 
@@ -158,10 +239,8 @@ final class DataController: ObservableObject {
             self.agents = snaps
             self.runtimeError = nil
             if snaps.contains(where: { !$0.isError }) { self.lastGood = snaps }
-            self.lastUpdated = Date()
         case .failure(let error):
             self.runtimeError = error.message
-            self.lastUpdated = Date()
         }
     }
 
@@ -172,11 +251,11 @@ final class DataController: ObservableObject {
     /// decodes normally and is kept).
     private static func runCLI(
         decoder: JSONDecoder, workDays: Int, dailyBudget: Double, bypassCache: Bool,
-        claudeAccounts: [ClaudeAccount], hyperResetTime: String
+        claudeAccounts: [ClaudeAccount], hyperResetTime: String, hyperTotalCredits: String
     ) -> Result<[AgentSnapshot], CLIError> {
         let base = runAll(
             decoder: decoder, workDays: workDays, dailyBudget: dailyBudget, bypassCache: bypassCache,
-            hyperResetTime: hyperResetTime)
+            hyperResetTime: hyperResetTime, hyperTotalCredits: hyperTotalCredits)
         guard case .success(var snaps) = base else { return base }
 
         for account in claudeAccounts {
@@ -249,7 +328,7 @@ final class DataController: ObservableObject {
     /// Run `agent-usage all --json --work-days N --daily-budget B` and decode the array.
     private static func runAll(
         decoder: JSONDecoder, workDays: Int, dailyBudget: Double, bypassCache: Bool,
-        hyperResetTime: String
+        hyperResetTime: String, hyperTotalCredits: String
     ) -> Result<[AgentSnapshot], CLIError> {
         let launch = resolveLaunch()
 
@@ -266,6 +345,9 @@ final class DataController: ObservableObject {
         // work from Finder, where the app inherits no shell profile and so no HYPER_RESET_TIME.
         let reset = hyperResetTime.trimmingCharacters(in: .whitespaces)
         if !reset.isEmpty { args += ["--reset-time", reset] }
+        // Same story for the pool size: its API reports a balance, never the ceiling that balance
+        // sits in, so the CLI infers it unless told. Empty leaves the inference in charge.
+        if !hyperTotalCredits.isEmpty { args += ["--total-credits", hyperTotalCredits] }
         process.arguments = args
 
         let stdout = Pipe()
@@ -289,6 +371,45 @@ final class DataController: ObservableObject {
             return .failure(CLIError(
                 message: "could not decode agent-usage output: \(error.localizedDescription)\n\(raw)"))
         }
+    }
+
+    /// Run `agent-usage <id> --json` for one built-in agent. Returns the decoded snapshot —
+    /// including a per-agent error document, which is a real reading and belongs on screen — or
+    /// nil if the process failed to spawn or its output couldn't be decoded.
+    private static func runSingleAgent(
+        _ agentID: String, decoder: JSONDecoder, workDays: Int, dailyBudget: Double,
+        hyperResetTime: String, hyperTotalCredits: String
+    ) -> AgentSnapshot? {
+        let launch = resolveLaunch()
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launch.executable)
+        var args = launch.leadingArgs + [
+            agentID, "--json",
+            "--work-days", String(workDays),
+            "--daily-budget", String(format: "%.4f", dailyBudget),
+            "--cache-ttl", "0",
+        ]
+        // The settings Hyper's API can't report. Harmless for the agents that don't read them,
+        // which keeps this the same command whichever agent is being refreshed.
+        let reset = hyperResetTime.trimmingCharacters(in: .whitespaces)
+        if !reset.isEmpty { args += ["--reset-time", reset] }
+        if !hyperTotalCredits.isEmpty { args += ["--total-credits", hyperTotalCredits] }
+        process.arguments = args
+
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return try? decoder.decode(AgentSnapshot.self, from: data)
     }
 
     /// Run `agent-usage claude --json` for one extra account, overriding its identity and pointing
