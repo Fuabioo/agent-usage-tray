@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 763 20" width="763" height="20" role="img" aria-label="rust 2021 · version v0.1.0 · agents 3 built-in · frontend menu bar · contract one json · license MIT">
+  <defs>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.12"/>
+    </linearGradient>
+    <clipPath id="b1"><rect x="0"   y="0" width="86"  height="20" rx="3"/></clipPath>
+    <clipPath id="b2"><rect x="92"  y="0" width="121" height="20" rx="3"/></clipPath>
+    <clipPath id="b3"><rect x="219" y="0" width="142" height="20" rx="3"/></clipPath>
+    <clipPath id="b4"><rect x="367" y="0" width="142" height="20" rx="3"/></clipPath>
+    <clipPath id="b5"><rect x="515" y="0" width="142" height="20" rx="3"/></clipPath>
+    <clipPath id="b6"><rect x="663" y="0" width="100" height="20" rx="3"/></clipPath>
+  </defs>
+
+  <g font-family="Verdana, Geneva, 'DejaVu Sans', sans-serif" font-size="11" fill="#ffffff" text-anchor="middle">
+    <g clip-path="url(#b1)"><rect x="0"   width="43" height="20" fill="#4A5568"/><rect x="43"  width="43" height="20" fill="#B7410E"/><rect x="0"   width="86"  height="20" fill="url(#sheen)"/></g>
+    <text x="21.5"  y="14">rust</text><text x="64.5"  y="14">2021</text>
+
+    <g clip-path="url(#b2)"><rect x="92"  width="64" height="20" fill="#4A5568"/><rect x="156" width="57" height="20" fill="#2563EB"/><rect x="92"  width="121" height="20" fill="url(#sheen)"/></g>
+    <text x="124"   y="14">version</text><text x="184.5" y="14">v0.1.0</text>
+
+    <g clip-path="url(#b3)"><rect x="219" width="57" height="20" fill="#4A5568"/><rect x="276" width="85" height="20" fill="#16A34A"/><rect x="219" width="142" height="20" fill="url(#sheen)"/></g>
+    <text x="247.5" y="14">agents</text><text x="318.5" y="14">3 built-in</text>
+
+    <g clip-path="url(#b4)"><rect x="367" width="71" height="20" fill="#4A5568"/><rect x="438" width="71" height="20" fill="#111827"/><rect x="367" width="142" height="20" fill="url(#sheen)"/></g>
+    <text x="402.5" y="14">frontend</text><text x="473.5" y="14">menu bar</text>
+
+    <g clip-path="url(#b5)"><rect x="515" width="71" height="20" fill="#4A5568"/><rect x="586" width="71" height="20" fill="#B45309"/><rect x="515" width="142" height="20" fill="url(#sheen)"/></g>
+    <text x="550.5" y="14">contract</text><text x="621.5" y="14">one json</text>
+
+    <g clip-path="url(#b6)"><rect x="663" width="64" height="20" fill="#4A5568"/><rect x="727" width="36" height="20" fill="#4F46E5"/><rect x="663" width="100" height="20" fill="url(#sheen)"/></g>
+    <text x="695"   y="14">license</text><text x="745"   y="14">MIT</text>
+  </g>
+</svg>

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 72" width="1200" height="72" fill="none" role="img" aria-label="">
+  <defs>
+    <linearGradient id="fbg" x1="0" y1="0" x2="1200" y2="72" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#16233A"/>
+      <stop offset="0.5" stop-color="#111C2E"/>
+      <stop offset="1" stop-color="#0B1220"/>
+    </linearGradient>
+    <linearGradient id="framp" x1="0" y1="0" x2="1200" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5EEAD4"/>
+      <stop offset="0.34" stop-color="#3FB950"/>
+      <stop offset="0.72" stop-color="#E3B341"/>
+      <stop offset="1" stop-color="#F85149"/>
+    </linearGradient>
+    <linearGradient id="fsheen">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="fcard"><rect width="1200" height="72" rx="12"/></clipPath>
+  </defs>
+
+  <rect width="1200" height="72" rx="12" fill="url(#fbg)"/>
+
+  <g clip-path="url(#fcard)">
+    <g opacity="0.06" stroke="#ffffff" fill="none" stroke-width="2">
+      <circle cx="140" cy="72" r="96" stroke-dasharray="10 24">
+        <animateTransform attributeName="transform" type="rotate" from="0 140 72" to="360 140 72" dur="56s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="1060" cy="72" r="120" stroke-dasharray="14 22">
+        <animateTransform attributeName="transform" type="rotate" from="360 1060 72" to="0 1060 72" dur="70s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <rect x="0" y="0" width="1200" height="6" fill="url(#framp)" opacity="0.95"/>
+    <rect x="-240" y="0" width="240" height="6" fill="url(#fsheen)">
+      <animateTransform attributeName="transform" type="translate" from="0 0" to="1440 0" dur="9s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>

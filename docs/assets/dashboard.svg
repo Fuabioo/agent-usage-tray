@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 258" width="760" height="258" fill="none" role="img" aria-label="menu bar showing 58 percent weekly and 4 percent session for Claude Code, 71 percent for Codex; dashboard rings showing 20 percent left and a pool projected to run out Thursday">
+  <!-- card -->
+  <rect x="1" y="1" width="758" height="256" rx="12" fill="#0D1117" stroke="#30363D"/>
+  <!-- menu bar strip -->
+  <path d="M1 13 A12 12 0 0 1 13 1 H747 A12 12 0 0 1 759 13 V37 H1 Z" fill="#161B22"/>
+  <path d="M1 37 H759" stroke="#30363D"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12">
+    <!-- agent 1 — on pace -->
+    <circle cx="476" cy="19" r="5" fill="#3FB950"/>
+    <text x="488" y="23" fill="#3FB950">58 &#183; 4</text>
+    <path d="M546 9 V29" stroke="#30363D"/>
+    <!-- agent 2 — drifts from yellow into red -->
+    <circle cx="562" cy="19" r="5" fill="#E3B341">
+      <animate attributeName="fill" values="#E3B341;#E3B341;#F85149;#F85149;#E3B341" keyTimes="0;0.28;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
+    </circle>
+    <text x="574" y="23" fill="#E3B341">71 &#183; 12
+      <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.28;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
+    </text>
+    <text x="574" y="23" fill="#F85149" opacity="0">78 &#183; 19
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.28;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
+    </text>
+    <text x="734" y="23" text-anchor="end" fill="#8B949E">Fri 9:41</text>
+  </g>
+
+  <text x="24" y="64" font-family="'Segoe UI', Ubuntu, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1.4" fill="#8B949E">TODAY&#8217;S PACE</text>
+
+  <!-- ring: Claude Code, on pace -->
+  <g transform="rotate(-90 88 142)">
+    <circle cx="88" cy="142" r="40" stroke="#ffffff" stroke-opacity="0.10" stroke-width="9"/>
+    <circle cx="88" cy="142" r="40" stroke="#3FB950" stroke-width="9" stroke-linecap="round" stroke-dasharray="251.3" stroke-dashoffset="251.3">
+      <animate attributeName="stroke-dashoffset" values="251.3;50;50;251.3" keyTimes="0;0.30;0.94;1" dur="8s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  <g font-family="'Segoe UI', Ubuntu, Helvetica, Arial, sans-serif" text-anchor="middle">
+    <text x="88" y="142" font-size="18" font-weight="700" fill="#C9D1D9">20%</text>
+    <text x="88" y="160" font-size="11" fill="#8B949E">left</text>
+    <text x="88" y="202" font-size="12" fill="#C9D1D9">Claude Code</text>
+    <text x="88" y="218" font-size="11" fill="#6E7681">day 4/5</text>
+  </g>
+
+  <!-- ring: Codex, a pool on course to run dry -->
+  <g transform="rotate(-90 232 142)">
+    <circle cx="232" cy="142" r="40" stroke="#ffffff" stroke-opacity="0.10" stroke-width="9"/>
+    <circle cx="232" cy="142" r="40" stroke="#3FB950" stroke-width="9" stroke-linecap="round" stroke-dasharray="251.3" stroke-dashoffset="251.3">
+      <animate attributeName="stroke-dashoffset" values="251.3;18;18;251.3" keyTimes="0;0.34;0.94;1" dur="8s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#3FB950;#E3B341;#F85149;#F85149;#3FB950" keyTimes="0;0.24;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  <g font-family="'Segoe UI', Ubuntu, Helvetica, Arial, sans-serif" text-anchor="middle">
+    <text x="232" y="138" font-size="11" fill="#8B949E">out</text>
+    <text x="232" y="159" font-size="16" font-weight="700" fill="#F85149">~Thu</text>
+    <text x="232" y="202" font-size="12" fill="#C9D1D9">Codex</text>
+    <text x="232" y="218" font-size="11" fill="#6E7681">day 3/5</text>
+  </g>
+
+  <!-- burn-rate alert, raised once the projection crosses the reset -->
+  <g opacity="0">
+    <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.40;0.50;0.94;1" dur="8s" repeatCount="indefinite"/>
+    <rect x="310" y="100" width="426" height="92" rx="8" fill="#1C1416" stroke="#F85149" stroke-opacity="0.38"/>
+    <g font-family="'Segoe UI', Ubuntu, Helvetica, Arial, sans-serif">
+      <text x="328" y="126" font-size="13" font-weight="600" fill="#F0A5A0">&#9888; weekly budget gone ~Thu at this rate</text>
+      <text x="328" y="150" font-size="12" fill="#8B949E">burning &#8776;24%/day &#183; 20% in the last 5h</text>
+      <text x="328" y="172" font-size="11" fill="#6E7681">resets Mon Jun 15, 8:00 PM &#183; in 3d 8h</text>
+    </g>
+  </g>
+
+  <!-- footer: freshness, and the marker for a fallback reading -->
+  <g font-family="'Segoe UI', Ubuntu, Helvetica, Arial, sans-serif">
+    <text x="24" y="240" font-size="11" fill="#6E7681">updated 4s ago</text>
+    <g opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.56;0.64;0.94;1" dur="8s" repeatCount="indefinite"/>
+      <rect x="106" y="229" width="52" height="15" rx="7" fill="#21262D"/>
+      <text x="132" y="240" text-anchor="middle" font-size="10" fill="#8B949E">cached</text>
+    </g>
+  </g>
+</svg>

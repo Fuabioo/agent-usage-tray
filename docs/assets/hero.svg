@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 220" width="1200" height="220" fill="none" role="img" aria-label="agent-usage-tray — every coding agent's usage budget, at a glance">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1220"/>
+      <stop offset="0.55" stop-color="#111C2E"/>
+      <stop offset="1" stop-color="#16233A"/>
+    </linearGradient>
+    <linearGradient id="ramp" x1="0" y1="0" x2="1200" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5EEAD4"/>
+      <stop offset="0.34" stop-color="#3FB950"/>
+      <stop offset="0.72" stop-color="#E3B341"/>
+      <stop offset="1" stop-color="#F85149"/>
+    </linearGradient>
+    <linearGradient id="sheen">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#ffffff" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="card"><rect width="1200" height="220" rx="12"/></clipPath>
+  </defs>
+
+  <rect width="1200" height="220" rx="12" fill="url(#bg)"/>
+
+  <g clip-path="url(#card)">
+    <rect width="1200" height="110" fill="url(#top)"/>
+
+    <!-- slowly rotating dashed orbits, echoing the ring gauges -->
+    <g opacity="0.07" stroke="#ffffff" fill="none" stroke-width="2">
+      <circle cx="1015" cy="110" r="168" stroke-dasharray="14 22">
+        <animateTransform attributeName="transform" type="rotate" from="0 1015 110" to="360 1015 110" dur="64s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="185" cy="110" r="132" stroke-dasharray="10 26">
+        <animateTransform attributeName="transform" type="rotate" from="360 185 110" to="0 185 110" dur="48s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- left gauge: on pace -->
+    <g transform="rotate(-90 185 110)">
+      <circle cx="185" cy="110" r="44" stroke="#ffffff" stroke-opacity="0.13" stroke-width="9"/>
+      <circle cx="185" cy="110" r="44" stroke="#3FB950" stroke-width="9" stroke-linecap="round" stroke-dasharray="276.5" stroke-dashoffset="276.5">
+        <animate attributeName="stroke-dashoffset" values="276.5;105;105;276.5" keyTimes="0;0.34;0.93;1" dur="7s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- right gauge: crossing into the amber band -->
+    <g transform="rotate(-90 1015 110)">
+      <circle cx="1015" cy="110" r="44" stroke="#ffffff" stroke-opacity="0.13" stroke-width="9"/>
+      <circle cx="1015" cy="110" r="44" stroke="#3FB950" stroke-width="9" stroke-linecap="round" stroke-dasharray="276.5" stroke-dashoffset="276.5">
+        <animate attributeName="stroke-dashoffset" values="276.5;46;46;276.5" keyTimes="0;0.42;0.93;1" dur="7s" repeatCount="indefinite"/>
+        <animate attributeName="stroke" values="#3FB950;#3FB950;#E3B341;#E3B341;#3FB950" keyTimes="0;0.28;0.44;0.93;1" dur="7s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <text x="600" y="118" text-anchor="middle" font-family="'Segoe UI', Ubuntu, Helvetica, Arial, sans-serif" font-size="60" font-weight="800" letter-spacing="0.5" fill="#ffffff">agent-usage-tray</text>
+    <text x="600" y="154" text-anchor="middle" font-family="'Segoe UI', Ubuntu, Helvetica, Arial, sans-serif" font-size="18" fill="#ffffff" fill-opacity="0.72">every coding agent&#8217;s usage budget &#8212; at a glance</text>
+
+    <!-- the pace ramp: mint, green, yellow, red -->
+    <rect x="0" y="205" width="1200" height="6" fill="url(#ramp)" opacity="0.95"/>
+    <rect x="-240" y="205" width="240" height="6" fill="url(#sheen)">
+      <animateTransform attributeName="transform" type="translate" from="0 0" to="1440 0" dur="7s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>
