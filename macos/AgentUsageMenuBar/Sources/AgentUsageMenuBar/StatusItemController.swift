@@ -15,6 +15,9 @@ final class StatusItemController {
     private var settingsWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
     private var appearanceObservation: NSKeyValueObservation?
+    /// Appearance the bar was last baked under. Suppresses no-op `effectiveAppearance`
+    /// observations — see where it's compared in `init`.
+    private var lastRenderedAppearance: NSAppearance.Name?
 
     init(controller: DataController, settings: AppSettings) {
         self.controller = controller
@@ -40,8 +43,26 @@ final class StatusItemController {
             button.action = #selector(handleClick(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
+            // Re-bake when the system flips Light/Dark so the adaptive pace colors re-resolve.
+            // The observation is only a HINT that the appearance may have changed, never a
+            // source of values: replacing the button's image re-fires it (KVO does not
+            // suppress equal values), and its `newValue` reports the app-level appearance
+            // (Aqua/DarkAqua), not the status button's vibrant variant — so an unguarded, or
+            // payload-comparing, `updateBar` here bakes → sets the image → re-fires → bakes
+            // again, forever. That loop pegged a full core (~3ms of PDF rasterization +
+            // typesetting per turn, hundreds of turns/sec). The truth is the button's own
+            // `effectiveAppearance` (stable across image sets, measured): re-render only when
+            // what we'd bake under differs from what we last baked under. `updateBar` re-syncs
+            // the record after every bake it does.
+            lastRenderedAppearance = button.effectiveAppearance.name
             appearanceObservation = button.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
-                DispatchQueue.main.async { self?.updateBar() }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    let name = button.effectiveAppearance.name
+                    guard name != self.lastRenderedAppearance else { return }
+                    self.lastRenderedAppearance = name
+                    self.updateBar()
+                }
             }
         }
 
@@ -143,10 +164,14 @@ final class StatusItemController {
         let agents = controller.merged.filter { settings.isEnabled($0.agent.id) }
         if agents.isEmpty {
             button.image = controller.runtimeError == nil ? placeholderImage() : errorImage()
-            return
+        } else {
+            let out = renderBar(agents: agents)
+            button.image = out.length > 0 ? render(out) : placeholderImage()
         }
-        let out = renderBar(agents: agents)
-        button.image = out.length > 0 ? render(out) : placeholderImage()
+        // Every path above replaced the button's image, which re-fires the appearance
+        // observation (see `init`); recording the appearance just baked under lets that
+        // re-fire be recognized as the no-op it is.
+        lastRenderedAppearance = button.effectiveAppearance.name
     }
 
     // MARK: - Image drawing

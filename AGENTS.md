@@ -241,6 +241,16 @@ brake, so `core/src/history.rs` reconstructs one from successive readings.
   This is why `AgentSnapshot.stale`/`staleReason` are `var`.
 - `creditDisplay` controls how credit pools are rendered in the menu bar and dashboard: `.credits` (raw balance like "1,620"), `.percentage` (remaining %), or `.both` ("1,620 · 98%").
 - Pace colors are adaptive (light/dark variants) via `NSColor(name: dynamicProvider:)`.
+- **The appearance observation is a hint, never a value source.** The bar image is a baked,
+  non-template bitmap, and *replacing the status button's image re-fires `effectiveAppearance`
+  KVO* (KVO does not suppress equal values). Worse, the observation's `newValue` reports the
+  app-level appearance (`Aqua`/`DarkAqua`), not the status button's vibrant variant
+  (`VibrantLight`/`VibrantDark`) — so a handler that re-renders off the payload (or off nothing)
+  is a bake → set-image → re-fire loop that pegs a full core (~3ms of PDF rasterization per
+  turn, hundreds of turns/sec; it burned ~10 CPU-hours over 10 days before the guard). The
+  button's own `effectiveAppearance` is stable across image sets, so `StatusItemController`
+  compares it against `lastRenderedAppearance` (re-synced by `updateBar` after every bake) and
+  re-renders only on a real change.
 - Agent logos are vector PDFs under `Resources/agents/<id>.pdf`. Hyper's diamond glyph is bundled; other agents fall back to SF Symbols defined in `Assets.symbolName(forID:)`. A secondary Claude account (`Assets.isSecondaryClaude`, any `claude`-prefixed id ≠ `claude`) maps to the derived `claude-alt` variant (the burst in a ring) so two Claude accounts never render an identical glyph.
 - The JSON decoder uses `.convertFromSnakeCase` and a custom ISO8601 with fractional seconds fallback.
 - `LSUIElement = YES` in Info.plist keeps it out of the Dock; `.accessory` activation policy is the runtime equivalent.
