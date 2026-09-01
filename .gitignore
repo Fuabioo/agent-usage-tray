@@ -14,3 +14,7 @@ macos/build/
 .idea/
 .vscode/
 *.swp
+
+# agents
+.claude/*
+
