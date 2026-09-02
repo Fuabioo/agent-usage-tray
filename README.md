@@ -8,7 +8,7 @@
 
 <img alt="agent-usage-tray — every coding agent's usage budget, at a glance" src="docs/assets/hero.svg" width="100%" />
 
-<img alt="Menu bar showing 58 · 4 for Claude Code and 71 · 12 for Codex; dashboard rings showing 20% left and a credit pool projected to run out Thursday" src="docs/assets/dashboard.svg" width="680" />
+<img alt="Menu bar showing 58% weekly with 4% session tucked underneath for Claude Code, and 71% over 12% for Codex; dashboard rings showing 20% left and a credit pool projected to run out Thursday" src="docs/assets/dashboard.svg" width="680" />
 
 <img alt="rust 2021 · version v0.1.0 · agents 3 built-in · frontend menu bar · contract one json · license MIT" src="docs/assets/badges.svg" />
 
@@ -49,7 +49,8 @@ change.
 
 ## 📸 Screenshots
 
-The menu bar shows each agent's `weekly · near-term %`, color-coded by pace; the dashboard popover
+The menu bar shows each agent's weekly reading with the near-term one tucked diagonally
+underneath, color-coded by pace; the dashboard popover
 adds per-agent ring gauges, reset countdowns, and burn-rate context. Anything true of one agent
 rather than of the run is shown on that agent: how old its reading is, a `cached` marker when it's
 a fallback, and a refresh — hover a ring and it becomes the button that re-asks just that agent.

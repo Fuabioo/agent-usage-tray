@@ -4,8 +4,9 @@ import ServiceManagement
 import SwiftUI
 
 /// Owns the menu bar item. Draws an at-a-glance, per-agent indicator (each agent's glyph plus
-/// `weekly · session %`, tinted by pace) into the bar button, toggles the SwiftUI dashboard
-/// popover on left-click, and shows a context menu on right-click.
+/// its weekly reading with the near-term one tucked diagonally underneath, tinted by pace)
+/// into the bar button, toggles the SwiftUI dashboard popover on left-click, and shows a
+/// context menu on right-click.
 final class StatusItemController {
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
@@ -164,9 +165,10 @@ final class StatusItemController {
         let agents = controller.merged.filter { settings.isEnabled($0.agent.id) }
         if agents.isEmpty {
             button.image = controller.runtimeError == nil ? placeholderImage() : errorImage()
+        } else if let layout = renderBar(agents: agents) {
+            button.image = render(layout)
         } else {
-            let out = renderBar(agents: agents)
-            button.image = out.length > 0 ? render(out) : placeholderImage()
+            button.image = placeholderImage()
         }
         // Every path above replaced the button's image, which re-fires the appearance
         // observation (see `init`); recording the appearance just baked under lets that
@@ -178,54 +180,92 @@ final class StatusItemController {
 
     private static let barFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
 
-    /// Build the menu bar content for the chosen display mode.
-    private func renderBar(agents: [AgentSnapshot]) -> NSAttributedString {
+    /// The tucked-in near-term reading's font in the two-number layout: smaller than the
+    /// weekly number it sits beneath, monospaced digits to hold the layout steady poll to poll.
+    private static let nearFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+
+    /// Height of the baked single-line bar image. The two-number layout bakes taller
+    /// (see `perAgentDiagonal`); both fit the system menu bar's status item area.
+    private static let barImageHeight: CGFloat = 18
+
+    /// One independently positioned line of bar content. `point` is where `draw(at:)` puts
+    /// the line box's bottom-left corner (see `perAgentDiagonal` for the y semantics).
+    private struct BarRun {
+        let text: NSAttributedString
+        let point: NSPoint
+    }
+
+    /// The full content of one baked bar image: positioned runs plus the bitmap height they
+    /// are composed into. Single-line modes are one run at the standard height; the
+    /// two-number layout staggers two runs per agent into a taller bitmap.
+    private struct BarLayout {
+        let runs: [BarRun]
+        let height: CGFloat
+
+        var width: CGFloat {
+            max(1, ceil(runs.map { $0.point.x + $0.text.size().width }.max() ?? 0))
+        }
+
+        /// One run, vertically centered in the standard single-line image height.
+        static func single(_ text: NSAttributedString) -> BarLayout {
+            let y = (StatusItemController.barImageHeight - text.size().height) / 2
+            return BarLayout(runs: [BarRun(text: text, point: NSPoint(x: 0, y: y))],
+                             height: StatusItemController.barImageHeight)
+        }
+    }
+
+    /// Build the menu bar content for the chosen display mode. Returns nil when the mode has
+    /// nothing to show for these agents (e.g. every agent errored in "worst metric").
+    private func renderBar(agents: [AgentSnapshot]) -> BarLayout? {
         let font = Self.barFont
-        let out = NSMutableAttributedString()
         let credit = settings.creditDisplay
 
         switch settings.menuBarMode {
         case .iconOnly:
-            for (i, agent) in agents.enumerated() {
-                if i > 0 { out.append(Self.segment(" ", color: .secondaryLabelColor, font: font)) }
-                Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 3)
-            }
+            return Self.iconRow(agents, font: font)
 
         case .worstMetric:
-            if let (w, _) = Self.worstAcross(agents) {
-                out.append(Self.segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
-            }
+            guard let (w, _) = Self.worstAcross(agents) else { return nil }
+            return .single(Self.segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
 
         case .iconWorst:
-            if let (w, agent) = Self.worstAcross(agents) {
-                Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 1)
-                out.append(Self.segment(" ", color: .secondaryLabelColor, font: font))
-                out.append(Self.segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
-            }
+            guard let (w, agent) = Self.worstAcross(agents) else { return nil }
+            let out = NSMutableAttributedString()
+            Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 1)
+            out.append(Self.segment(" ", color: .secondaryLabelColor, font: font))
+            out.append(Self.segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
+            return .single(out)
 
         case .perAgentPercent:
-            Self.appendPerAgent(out, agents: agents, font: font, both: false, credit: credit)
+            return Self.perAgentLine(agents, font: font, credit: credit)
 
         case .perAgentBoth:
-            Self.appendPerAgent(out, agents: agents, font: font, both: true, credit: credit)
+            return Self.perAgentDiagonal(agents, credit: credit)
 
         case .onlyAttention:
             let attention = agents.filter { !$0.isError && $0.worstPace.needsAttention }
             if attention.isEmpty {
                 // Everything's on track — show the color-coded glyphs so the bar isn't blank.
-                for (i, agent) in agents.enumerated() {
-                    if i > 0 { out.append(Self.segment(" ", color: .secondaryLabelColor, font: font)) }
-                    Self.appendGlyph(out, agent: agent, font: font, size: font.pointSize + 3)
-                }
-            } else {
-                Self.appendPerAgent(out, agents: attention, font: font, both: true, credit: credit)
+                return Self.iconRow(agents, font: font)
             }
+            return Self.perAgentDiagonal(attention, credit: credit)
 
         case .selectedAgent:
             let agent = agents.first { $0.agent.id == settings.selectedAgentID } ?? agents.first
-            if let agent { Self.appendPerAgent(out, agents: [agent], font: font, both: true, credit: credit) }
+            guard let agent else { return nil }
+            return Self.perAgentDiagonal([agent], credit: credit)
         }
-        return out
+    }
+
+    /// The color-coded glyph row shared by "icon only" and "only attention" when nothing
+    /// needs attention.
+    private static func iconRow(_ agents: [AgentSnapshot], font: NSFont) -> BarLayout? {
+        let out = NSMutableAttributedString()
+        for (i, agent) in agents.enumerated() {
+            if i > 0 { out.append(segment(" ", color: .secondaryLabelColor, font: font)) }
+            appendGlyph(out, agent: agent, font: font, size: font.pointSize + 3)
+        }
+        return out.length > 0 ? .single(out) : nil
     }
 
     /// A faint vertical divider between agents, padded with spaces so adjacent agents'
@@ -260,12 +300,13 @@ final class StatusItemController {
         return nil
     }
 
-    /// Append each agent as `glyph weekly · near-term %` (both) or `glyph worst%`, divided.
-    private static func appendPerAgent(
-        _ out: NSMutableAttributedString, agents: [AgentSnapshot], font: NSFont, both: Bool,
-        credit: AppSettings.CreditDisplay
-    ) {
+    /// Each agent as `glyph worst%` (its highest-utilization window), divided — the
+    /// single-number per-agent line.
+    private static func perAgentLine(
+        _ agents: [AgentSnapshot], font: NSFont, credit: AppSettings.CreditDisplay
+    ) -> BarLayout? {
         let sep = NSColor.secondaryLabelColor
+        let out = NSMutableAttributedString()
         for (i, agent) in agents.enumerated() {
             if i > 0 { out.append(separator(font)) }
             appendGlyph(out, agent: agent, font: font, size: font.pointSize + 1)
@@ -275,15 +316,98 @@ final class StatusItemController {
                 out.append(segment("—", color: sep, font: font))
                 continue
             }
-
-            if both, let w = agent.window("weekly"), let near = nearTermReading(agent) {
-                out.append(segment(intPct(w.usedPct), color: w.pace.nsColor, font: font))
-                out.append(segment(" · ", color: sep, font: font))
-                out.append(segment(near.text, color: near.color, font: font))
-            } else if let w = worstWindow(agent) {
-                out.append(segment(Self.barValue(w, credit: credit), color: w.pace.nsColor, font: font))
+            if let w = worstWindow(agent) {
+                out.append(segment(barValue(w, credit: credit), color: w.pace.nsColor, font: font))
             }
         }
+        return out.length > 0 ? .single(out) : nil
+    }
+
+    /// The two-number per-agent layout: the weekly reading at the bar's usual size with the
+    /// near-term one tucked diagonally underneath, right-aligned to the weekly number's
+    /// trailing edge.
+    ///
+    /// The stagger is what buys the font size back. A strictly stacked pair needs a full line
+    /// of separation and lands around 9pt to fit the bar's fixed height; staggered diagonally,
+    /// the two line boxes overlap, and since a reading is digits and `%` (ink that never
+    /// descends below its baseline), the only real constraint is that the tucked reading's
+    /// ink top clear the weekly number's baseline by `gap`. Every weekly reading shares one
+    /// baseline and every tucked one another, so the two ink bands are globally disjoint —
+    /// no per-column collision checking is needed. The agent glyph is the one exception: it
+    /// hangs below the weekly baseline, so a tucked reading is clamped to start past it.
+    ///
+    /// Y semantics in the `NSImage.lockFocus` context (non-flipped): `draw(at:)` puts a run's
+    /// line box bottom at its point and the baseline at `point.y + |descender|`. The tucked
+    /// runs' points are therefore negative — their boxes' empty descender space hangs below
+    /// the bitmap — which is what pins their ink to the bottom padding.
+    private static func perAgentDiagonal(
+        _ agents: [AgentSnapshot], credit: AppSettings.CreditDisplay
+    ) -> BarLayout? {
+        let topFont = barFont
+        let nearFont = Self.nearFont
+        let sep = NSColor.secondaryLabelColor
+
+        // All near-term readings are digits + `%`, so their ink height is one constant;
+        // measure it rather than hard-coding SF Pro's `%` overshoot past cap height.
+        let nearInkH = inkHeight(segment("0%", color: sep, font: nearFont))
+        let glyphH = topFont.pointSize + 1
+        let gap: CGFloat = 1.75, bottomPad: CGFloat = 0.5, topPad: CGFloat = 0.5
+        let nearBaseline = bottomPad
+        let topBaseline = bottomPad + nearInkH + gap
+        // Tallest ink above the weekly baseline: the agent glyph (centered on cap height),
+        // or the inter-agent `│` divider, which can reach the ascender in its fallback font.
+        let inkAboveTop = max((topFont.capHeight + glyphH) / 2, topFont.ascender)
+        let height = ceil(topBaseline + inkAboveTop + topPad)
+        let nearY = nearBaseline + nearFont.descender
+        let topY = topBaseline + topFont.descender
+
+        var runs: [BarRun] = []
+        var x: CGFloat = 0
+        var anyNear = false
+        for (i, agent) in agents.enumerated() {
+            let top = NSMutableAttributedString()
+            // A tighter divider than the single-line mode's: the tucked reading already
+            // narrows each agent's column, so wide gutters would dominate the bar.
+            if i > 0 { top.append(segment(" │ ", color: .tertiaryLabelColor, font: topFont)) }
+            appendGlyph(top, agent: agent, font: topFont, size: glyphH)
+            top.append(segment(" ", color: sep, font: topFont))
+
+            var near: (text: NSAttributedString, x: CGFloat)?
+
+            if agent.isError {
+                top.append(segment("—", color: sep, font: topFont))
+            } else if let w = agent.window("weekly"), let reading = nearTermReading(agent) {
+                // Where the weekly number starts, past the glyph: the tucked reading may
+                // not slide left of this, whatever its width.
+                let numberLeft = top.size().width
+                top.append(segment(intPct(w.usedPct) + "%", color: w.pace.nsColor, font: topFont))
+                let text = segment(reading.text, color: reading.color, font: nearFont)
+                // Right-align under the weekly number's trailing edge; a wider reading
+                // protrudes right instead of crowding the glyph.
+                let bx = max(x + numberLeft, x + top.size().width - text.size().width)
+                near = (text, bx)
+            } else if let w = worstWindow(agent) {
+                top.append(segment(barValue(w, credit: credit), color: w.pace.nsColor, font: topFont))
+            }
+
+            runs.append(BarRun(text: top, point: NSPoint(x: x, y: topY)))
+            if let near {
+                runs.append(BarRun(text: near.text, point: NSPoint(x: near.x, y: nearY)))
+                anyNear = true
+            }
+            x = max(x + top.size().width, near.map { $0.x + $0.text.size().width } ?? 0)
+        }
+        // No tucked readings at all (every agent errored or reports a single window): the
+        // stagger would just strand one line at the top of an oversized bitmap.
+        guard anyNear else { return perAgentLine(agents, font: topFont, credit: credit) }
+        return BarLayout(runs: runs, height: height)
+    }
+
+    /// Ink (not line-box) height of a single-line string — the clearance math in
+    /// `perAgentDiagonal` needs real glyph extents because `%` overshoots cap height.
+    private static func inkHeight(_ s: NSAttributedString) -> CGFloat {
+        s.boundingRect(with: CGSize(width: 10_000, height: 10_000),
+                       options: [.usesLineFragmentOrigin, .usesDeviceMetrics]).height
     }
 
     /// The menu-bar reading for a window. A credit pool reports its raw remaining balance
@@ -354,20 +478,24 @@ final class StatusItemController {
     /// makes the status item blink out and reappear erratically. A static bitmap can't blank out.
     /// Adaptive pace colors stay correct on Light/Dark toggle because `appearanceObservation`
     /// re-runs `updateBar()` on every appearance change, re-baking under the new appearance below.
-    private func render(_ attributed: NSAttributedString) -> NSImage {
-        let size = attributed.size()
-        let height: CGFloat = 18
-        let imageSize = NSSize(width: max(1, ceil(size.width)), height: height)
+    private func render(_ layout: BarLayout) -> NSImage {
+        let imageSize = NSSize(width: layout.width, height: layout.height)
         let appearance = statusItem.button?.effectiveAppearance ?? NSAppearance.currentDrawing()
 
         let image = NSImage(size: imageSize)
         image.lockFocus()
         appearance.performAsCurrentDrawingAppearance {
-            let y = (height - size.height) / 2
-            attributed.draw(at: NSPoint(x: 0, y: y))
+            for run in layout.runs {
+                run.text.draw(at: run.point)
+            }
         }
         image.unlockFocus()
         image.isTemplate = false
         return image
+    }
+
+    /// The fixed-height single-line bake, used by the placeholder and error images.
+    private func render(_ attributed: NSAttributedString) -> NSImage {
+        render(BarLayout.single(attributed))
     }
 }

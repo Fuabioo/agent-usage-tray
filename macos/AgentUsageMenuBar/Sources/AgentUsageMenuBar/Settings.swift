@@ -26,9 +26,10 @@ final class AppSettings: ObservableObject {
         case worstMetric       // the single highest utilization across agents, e.g. "88%"
         case iconWorst         // the worst agent's glyph + that number
         case perAgentPercent   // each agent: glyph + one % (its worst window)
-        case perAgentBoth      // each agent: glyph + weekly · session %
-        case onlyAttention     // per-agent · both, but only agents at yellow/red
-        case selectedAgent     // only the chosen agent: glyph + weekly · session %
+        case perAgentBoth      // each agent: weekly reading with the near-term one tucked
+                                // diagonally underneath
+        case onlyAttention     // the diagonal pair, but only agents at yellow/red
+        case selectedAgent     // only the chosen agent, as the diagonal pair
 
         var id: String { rawValue }
 
@@ -50,7 +51,7 @@ final class AppSettings: ObservableObject {
             case .worstMetric: return "e.g. “88%”"
             case .iconWorst: return "glyph + number"
             case .perAgentPercent: return "one per agent"
-            case .perAgentBoth: return "5h + weekly"
+            case .perAgentBoth: return "weekly + session, diagonal"
             case .onlyAttention: return "hide on-track agents"
             case .selectedAgent: return "pick one"
             }

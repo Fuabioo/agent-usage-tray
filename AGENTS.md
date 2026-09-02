@@ -240,6 +240,20 @@ brake, so `core/src/history.rs` reconstructs one from successive readings.
   (the failure happened in the app), and an unmarked substitution renders an old reading as current.
   This is why `AgentSnapshot.stale`/`staleReason` are `var`.
 - `creditDisplay` controls how credit pools are rendered in the menu bar and dashboard: `.credits` (raw balance like "1,620"), `.percentage` (remaining %), or `.both` ("1,620 · 98%").
+- **The bar's two-number layout is diagonal, not side by side.** `perAgentDiagonal` renders each
+  agent's weekly reading at the bar's usual 12pt with the near-term one tucked underneath at
+  10pt, right-aligned to the weekly number's trailing edge (clamped so it can't slide under the
+  glyph). The vertical stagger is what fits two numbers in the bar's fixed height: digits and `%`
+  have no descenders, so the tucked reading's ink only has to clear the weekly number's baseline
+  by a fixed gap, where a strict stack would need a full line of separation and roughly
+  two-thirds the font size. All weekly readings share one baseline and all tucked ones another,
+  so the two ink bands are globally disjoint — no per-column collision checking. Rendering is
+  composed of independently positioned runs (`BarRun`/`BarLayout`) baked into one bitmap. The
+  `draw(at:)` in the `NSImage.lockFocus` context is **non-flipped**: a run's line box *bottom*
+  lands at its point (baseline = `point.y + |descender|`), which is why the tucked runs' points
+  are negative (their empty descender space hangs below the bitmap) and why the baseline math in
+  `perAgentDiagonal` is written bottom-up. If no agent produces a tucked reading, the layout
+  degrades to the single-line `perAgentLine` rather than stranding one line in a taller bitmap.
 - Pace colors are adaptive (light/dark variants) via `NSColor(name: dynamicProvider:)`.
 - **The appearance observation is a hint, never a value source.** The bar image is a baked,
   non-template bitmap, and *replacing the status button's image re-fires `effectiveAppearance`
