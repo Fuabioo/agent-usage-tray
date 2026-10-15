@@ -30,7 +30,10 @@ struct UsageResponse {
 #[derive(Debug, Deserialize)]
 struct UsageWindow {
     utilization: f64,
-    resets_at: chrono::DateTime<chrono::Utc>,
+    /// `null` when the window has no scheduled reset — e.g. the five-hour window while no
+    /// session is active. Kept as `None` rather than guessed; consumers skip reset-based pace.
+    #[serde(default)]
+    resets_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub struct Claude;
@@ -74,31 +77,36 @@ impl Provider for Claude {
             opts.timeout,
         )?;
 
-        let parsed: UsageResponse =
-            serde_json::from_str(&body).map_err(|e| UsageError::Parse(e.to_string()))?;
-
         Ok(Usage {
             agent: agent_usage_core::AgentInfo {
                 id: self.id().to_string(),
                 label: self.label().to_string(),
                 source: self.source().to_string(),
             },
-            windows: vec![
-                Window::utilization(
-                    WindowKind::Weekly,
-                    "weekly",
-                    parsed.seven_day.utilization,
-                    Some(parsed.seven_day.resets_at),
-                ),
-                Window::utilization(
-                    WindowKind::Session,
-                    "session",
-                    parsed.five_hour.utilization,
-                    Some(parsed.five_hour.resets_at),
-                ),
-            ],
+            windows: parse_windows(&body)?,
         })
     }
+}
+
+/// Normalize the usage response body into the weekly and session windows.
+fn parse_windows(body: &str) -> Result<Vec<Window>, UsageError> {
+    let parsed: UsageResponse =
+        serde_json::from_str(body).map_err(|e| UsageError::Parse(e.to_string()))?;
+
+    Ok(vec![
+        Window::utilization(
+            WindowKind::Weekly,
+            "weekly",
+            parsed.seven_day.utilization,
+            parsed.seven_day.resets_at,
+        ),
+        Window::utilization(
+            WindowKind::Session,
+            "session",
+            parsed.five_hour.utilization,
+            parsed.five_hour.resets_at,
+        ),
+    ])
 }
 
 /// Resolve the OAuth bearer token: explicit/default file first, macOS Keychain as fallback.
@@ -189,6 +197,40 @@ mod tests {
             parse_token("{nope"),
             Err(UsageError::CredentialsParse(_))
         ));
+    }
+
+    #[test]
+    fn parse_windows_with_reset() {
+        let body = r#"{"five_hour":{"utilization":12.0,"resets_at":"2026-10-15T20:00:00Z"},
+                       "seven_day":{"utilization":40.0,"resets_at":"2026-10-20T02:00:00Z"}}"#;
+        let windows = parse_windows(body).unwrap();
+        assert_eq!(windows[0].kind, WindowKind::Weekly);
+        assert_eq!(
+            windows[0].resets_at.unwrap().to_rfc3339(),
+            "2026-10-20T02:00:00+00:00"
+        );
+        assert_eq!(
+            windows[1].resets_at.unwrap().to_rfc3339(),
+            "2026-10-15T20:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn parse_windows_null_reset() {
+        // An idle five-hour window comes back with `resets_at: null`.
+        let body = r#"{"five_hour":{"utilization":0.0,"resets_at":null},"seven_day":{"utilization":40.0,"resets_at":"2026-10-20T02:00:00Z"},"extra_usage":null}"#;
+        let windows = parse_windows(body).unwrap();
+        assert_eq!(windows[1].kind, WindowKind::Session);
+        assert_eq!(windows[1].used_pct(), 0.0);
+        assert_eq!(windows[1].resets_at, None);
+        assert!(windows[0].resets_at.is_some());
+    }
+
+    #[test]
+    fn parse_windows_missing_reset() {
+        let body = r#"{"five_hour":{"utilization":0.0},"seven_day":{"utilization":5.0,"resets_at":null}}"#;
+        let windows = parse_windows(body).unwrap();
+        assert!(windows.iter().all(|w| w.resets_at.is_none()));
     }
 
     #[test]
