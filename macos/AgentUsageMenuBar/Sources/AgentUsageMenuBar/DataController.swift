@@ -155,8 +155,9 @@ final class DataController: ObservableObject {
         }
     }
 
-    /// Refresh. `force` (a manual Refresh) bypasses the CLI's fresh-cache reuse so it always tries
-    /// the live source — but the CLI still serves stale data on a transient error.
+    /// Refresh. `force` (a manual Refresh) bypasses the CLI's fresh-cache reuse so it tries the live
+    /// source — unless that agent is in rate-limit backoff — and the CLI still serves stale data
+    /// on a transient error.
     func refresh(force: Bool = false) {
         let workDays = settings.workDays
         let dailyBudget = settings.dailyBudget
@@ -180,7 +181,8 @@ final class DataController: ObservableObject {
     /// Worth having because agents don't fail or recover together: one is rate-limited, one was
     /// just topped up, one has a token that needs its own `claude` to refresh it. The CLI is
     /// already per-agent (`agent-usage <id>`), so this is one cheap process rather than a sweep.
-    /// Always bypasses the cache — it is only ever reached by someone explicitly asking.
+    /// Always bypasses fresh-cache reuse — it is only ever reached by someone explicitly asking —
+    /// but not the CLI's rate-limit backoff.
     func refresh(agentID: String) {
         guard !refreshingAgentIDs.contains(agentID) else { return }
         let workDays = settings.workDays
@@ -339,7 +341,8 @@ final class DataController: ObservableObject {
             "--work-days", String(workDays),
             "--daily-budget", String(format: "%.4f", dailyBudget),
         ]
-        // A forced refresh skips fresh-cache reuse (still serves stale on a transient error).
+        // A forced refresh skips fresh-cache reuse (still serves stale on a transient error, and
+        // still waits out a rate-limit backoff).
         if bypassCache { args += ["--cache-ttl", "0"] }
         // Hyper's API reports no reset instant. Passing it explicitly is what makes the setting
         // work from Finder, where the app inherits no shell profile and so no HYPER_RESET_TIME.

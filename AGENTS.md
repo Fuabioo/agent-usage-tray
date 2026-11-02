@@ -79,6 +79,7 @@ The macOS Swift app calls the CLI binary as a subprocess — it does **not** lin
 - Default TTL: 60 seconds (`--cache-ttl`). 0 disables fresh-cache reuse but still serves stale data on transient errors.
 - `--no-cache` disables both read and write entirely.
 - `--status` bypasses the cache entirely (always fetches live).
+- **Rate-limit backoff** (`cli/src/backoff.rs`): a 429 writes `<id>.backoff.json` next to the cache, and JSON runs make no request until it expires: 5 min, doubling per consecutive 429 up to 1 h, or the source's `Retry-After` if longer. During the wait a run behaves as if it got a 429 (stale cache, else a `rate_limited` error). `--cache-ttl 0`, so manual Refresh, respects it; `--status` and `--no-cache` skip it. A success clears it.
 - The macOS app uses `--cache-ttl 0` when the user manually refreshes, but still relies on the stale-on-error fallback.
 
 ### Pace coloring (weekly windows)
@@ -109,7 +110,7 @@ A second Claude Code login (e.g. a personal account under `$CLAUDE_CONFIG_DIR=~/
 
 ### HTTP layer
 - Blocking `ureq` (no async runtime). All requests are synchronous one-shot calls.
-- `http::get()` maps HTTP status codes to `UsageError` variants: 401 → Unauthorized, 429 → RateLimited (honors Retry-After, capped at 300s), other non-2xx → UnexpectedStatus.
+- `http::get()` maps HTTP status codes to `UsageError` variants: 401 → Unauthorized, 429 → RateLimited (reports Retry-After, capped at 300s; `cli/src/backoff.rs` decides the actual wait), other non-2xx → UnexpectedStatus.
 
 ### Credit pools & the `budget` field
 

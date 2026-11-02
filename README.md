@@ -282,6 +282,8 @@ calls within `--cache-ttl` (default 60s) reuse the cached snapshot instead of re
 usage source — this keeps the app's frequent polling from tripping API rate limits. On a
 *transient* failure (rate limit, network) the last good snapshot is served instead of an error,
 marked `"stale": true`; auth/credential errors still surface. (`--status` always fetches live.)
+After a 429, JSON runs stop calling that agent's source for 5 minutes, doubling per consecutive
+429 up to an hour, even with `--cache-ttl 0`.
 See [ADR-003](docs/ADR/003-caching-and-resilience.md).
 
 <details>

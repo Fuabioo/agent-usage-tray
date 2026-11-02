@@ -15,6 +15,7 @@
 //! (`~/.config/agent-usage/config.json`, see [`agent_usage_core::Config`]) is the CLI's own
 //! baseline while a frontend passing its settings as arguments keeps overriding it.
 
+mod backoff;
 mod cache;
 mod history;
 mod output;
@@ -111,7 +112,8 @@ struct Cli {
     total_credits: Option<CreditsArg>,
 
     /// Seconds a cached snapshot stays fresh: repeated calls within this window reuse it instead
-    /// of re-hitting the usage source. 0 disables reuse (but still serves stale on error).
+    /// of re-hitting the usage source. 0 disables reuse (but still serves stale on error, and
+    /// still waits out a rate-limit backoff).
     #[arg(long, default_value_t = 60, value_name = "SECS")]
     cache_ttl: u64,
 
@@ -335,8 +337,8 @@ fn print_config(cli: &Cli, config: &Config) -> i32 {
 
 /// Fetch and render a single agent. Returns 0 on success/stale, 1 on a usage error.
 ///
-/// `--status` always fetches live (humans can retry); JSON output goes through the cache so the
-/// app gets dedupe + stale-on-error resilience.
+/// `--status` always fetches live (humans can retry); JSON output goes through the cache and the
+/// rate-limit backoff so the app gets dedupe + stale-on-error resilience.
 fn run_one(cli: &Cli, provider: &dyn Provider, budget: &Budget, config: &Config) -> i32 {
     let now = Utc::now();
     let id_ovr = cli.id.as_deref();
@@ -433,7 +435,8 @@ fn run_all(cli: &Cli, budget: &Budget, config: &Config) -> i32 {
 /// current `budget` and `now`. So a fresh cache hit still reflects the latest work-days setting
 /// and live countdowns; only the underlying usage is reused to avoid re-hitting the source. On a
 /// transient fetch error the last cached usage is served, marked `stale`; otherwise an error
-/// snapshot is returned (exit code 1).
+/// snapshot is returned (exit code 1). A rate-limit backoff in effect counts as such an error,
+/// without a request being made.
 fn agent_json(
     cli: &Cli,
     provider: &dyn Provider,
@@ -465,7 +468,15 @@ fn agent_json(
     }
 
     let opts = fetch_options(cli, config);
-    match provider.fetch(&opts) {
+    // `--no-cache` means "touch no state", so it skips the backoff along with the cache.
+    let backoff_path = agent_usage_core::cache_dir()
+        .filter(|_| use_cache)
+        .map(|dir| backoff::state_path(&dir, cache_id));
+    let fetched = match &backoff_path {
+        Some(path) => backoff::guarded(path, now, || provider.fetch(&opts)),
+        None => provider.fetch(&opts),
+    };
+    match fetched {
         Ok(mut usage) => {
             apply_identity(&mut usage.agent, id_override, label_override);
             if use_cache {
