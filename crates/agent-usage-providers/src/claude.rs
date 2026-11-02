@@ -23,8 +23,11 @@ const DEFAULT_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 /// The Anthropic OAuth usage response (only the fields we use).
 #[derive(Debug, Deserialize)]
 struct UsageResponse {
-    seven_day: UsageWindow,
-    five_hour: UsageWindow,
+    /// Either window may be `null`; `five_hour` has been seen `null` on an account in active use.
+    #[serde(default)]
+    seven_day: Option<UsageWindow>,
+    #[serde(default)]
+    five_hour: Option<UsageWindow>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,25 +91,28 @@ impl Provider for Claude {
     }
 }
 
-/// Normalize the usage response body into the weekly and session windows.
+/// Normalize the usage response body into the weekly and session windows, omitting any the API
+/// reports as absent. A response with neither is `NoData`, so it can't replace a good reading.
 fn parse_windows(body: &str) -> Result<Vec<Window>, UsageError> {
     let parsed: UsageResponse =
         serde_json::from_str(body).map_err(|e| UsageError::Parse(e.to_string()))?;
 
-    Ok(vec![
-        Window::utilization(
-            WindowKind::Weekly,
-            "weekly",
-            parsed.seven_day.utilization,
-            parsed.seven_day.resets_at,
-        ),
-        Window::utilization(
-            WindowKind::Session,
-            "session",
-            parsed.five_hour.utilization,
-            parsed.five_hour.resets_at,
-        ),
-    ])
+    let windows: Vec<Window> = [
+        (WindowKind::Weekly, "weekly", parsed.seven_day),
+        (WindowKind::Session, "session", parsed.five_hour),
+    ]
+    .into_iter()
+    .filter_map(|(kind, label, window)| {
+        window.map(|w| Window::utilization(kind, label, w.utilization, w.resets_at))
+    })
+    .collect();
+
+    if windows.is_empty() {
+        return Err(UsageError::NoData(
+            "Claude usage response had no usage windows".to_string(),
+        ));
+    }
+    Ok(windows)
 }
 
 /// Resolve the OAuth bearer token: explicit/default file first, macOS Keychain as fallback.
@@ -231,6 +237,29 @@ mod tests {
         let body = r#"{"five_hour":{"utilization":0.0},"seven_day":{"utilization":5.0,"resets_at":null}}"#;
         let windows = parse_windows(body).unwrap();
         assert!(windows.iter().all(|w| w.resets_at.is_none()));
+    }
+
+    #[test]
+    fn parse_windows_null_session_window() {
+        let body = r#"{"five_hour":null,"seven_day":{"utilization":40.0,"resets_at":"2026-10-20T02:00:00Z"}}"#;
+        let windows = parse_windows(body).unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].kind, WindowKind::Weekly);
+    }
+
+    #[test]
+    fn parse_windows_null_weekly_window() {
+        let body = r#"{"five_hour":{"utilization":12.0,"resets_at":null},"seven_day":null}"#;
+        let windows = parse_windows(body).unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].kind, WindowKind::Session);
+    }
+
+    #[test]
+    fn parse_windows_no_windows_is_no_data() {
+        for body in [r#"{"five_hour":null,"seven_day":null}"#, "{}"] {
+            assert!(matches!(parse_windows(body), Err(UsageError::NoData(_))));
+        }
     }
 
     #[test]
