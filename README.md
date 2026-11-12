@@ -392,7 +392,7 @@ Chrome) and tinted per pace, so glyphs stay crisp at any size.
 
 <br/>
 
-- **Menu bar** — one configurable indicator, agents separated by a divider and tinted by pace
+- **Menu bar** — one configurable indicator, agents separated by a plain gap and tinted by pace
   (mint when in surplus). Display modes (Settings → "Menu bar shows"): *icon only* (color-coded
   glyphs), *worst metric* (single highest %), *icon + worst*, *per-agent %*, *per-agent · both
   windows* (`weekly · near-term`, the default), *only yellow/red* (hide on-track agents), and

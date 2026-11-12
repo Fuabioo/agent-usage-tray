@@ -7,24 +7,23 @@
 
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12">
     <!-- agent 1 — on pace -->
-    <circle cx="476" cy="13" r="5" fill="#3FB950"/>
-    <text x="488" y="17" fill="#3FB950">58%</text>
-    <text x="498" y="30" font-size="10" fill="#3FB950">4%</text>
-    <path d="M522 9 V31" stroke="#30363D"/>
+    <circle cx="476" cy="19" r="8.5" fill="#3FB950"/>
+    <text x="488" y="18" fill="#3FB950">58%</text>
+    <text x="498" y="28" font-size="10" fill="#3FB950">4%</text>
     <!-- agent 2 — drifts from yellow into red -->
-    <circle cx="534" cy="13" r="5" fill="#E3B341">
+    <circle cx="526" cy="19" r="8.5" fill="#E3B341">
       <animate attributeName="fill" values="#E3B341;#E3B341;#F85149;#F85149;#E3B341" keyTimes="0;0.28;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
     </circle>
-    <text x="546" y="17" fill="#E3B341">71%
+    <text x="538" y="18" fill="#E3B341">71%
       <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.28;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
     </text>
-    <text x="550" y="30" font-size="10" fill="#E3B341">12%
+    <text x="542" y="28" font-size="10" fill="#E3B341">12%
       <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.28;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
     </text>
-    <text x="546" y="17" fill="#F85149" opacity="0">78%
+    <text x="538" y="18" fill="#F85149" opacity="0">78%
       <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.28;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
     </text>
-    <text x="550" y="30" font-size="10" fill="#F85149" opacity="0">19%
+    <text x="542" y="28" font-size="10" fill="#F85149" opacity="0">19%
       <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.28;0.36;0.94;1" dur="8s" repeatCount="indefinite"/>
     </text>
     <text x="734" y="23" text-anchor="end" fill="#8B949E">Fri 9:41</text>

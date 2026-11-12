@@ -243,18 +243,27 @@ brake, so `core/src/history.rs` reconstructs one from successive readings.
 - `creditDisplay` controls how credit pools are rendered in the menu bar and dashboard: `.credits` (raw balance like "1,620"), `.percentage` (remaining %), or `.both` ("1,620 · 98%").
 - **The bar's two-number layout is diagonal, not side by side.** `perAgentDiagonal` renders each
   agent's weekly reading at the bar's usual 12pt with the near-term one tucked underneath at
-  10pt, right-aligned to the weekly number's trailing edge (clamped so it can't slide under the
-  glyph). The vertical stagger is what fits two numbers in the bar's fixed height: digits and `%`
+  10pt, right-aligned to the weekly number's trailing edge (clamped so it can't slide back over
+  the glyph). The vertical stagger is what fits two numbers in the bar's fixed height: digits and `%`
   have no descenders, so the tucked reading's ink only has to clear the weekly number's baseline
   by a fixed gap, where a strict stack would need a full line of separation and roughly
   two-thirds the font size. All weekly readings share one baseline and all tucked ones another,
-  so the two ink bands are globally disjoint — no per-column collision checking. Rendering is
-  composed of independently positioned runs (`BarRun`/`BarLayout`) baked into one bitmap. The
-  `draw(at:)` in the `NSImage.lockFocus` context is **non-flipped**: a run's line box *bottom*
-  lands at its point (baseline = `point.y + |descender|`), which is why the tucked runs' points
-  are negative (their empty descender space hangs below the bitmap) and why the baseline math in
-  `perAgentDiagonal` is written bottom-up. If no agent produces a tucked reading, the layout
-  degrades to the single-line `perAgentLine` rather than stranding one line in a taller bitmap.
+  so the two ink bands are globally disjoint — no per-column collision checking. If no agent
+  produces a tucked reading, the layout degrades to the single-line `perAgentLine` rather than
+  stranding one line beside full-height glyphs.
+- **Bar content is composed of independently positioned runs (`BarRun`/`BarLayout`) baked into
+  one bitmap at the status button's height** — text lines and full-height glyph images are
+  layout siblings, not pieces of one attributed string. The item draws in
+  the *button's* 22pt band: on a notched display the bar is ~33pt but the system centers a 22pt
+  band in it for every item (measured: the button's superview sits at y≈5.5 in a 33pt window),
+  so `barHeight` reads `button.bounds.height` rather than the bar's thickness. The glyph
+  (`glyphRun`) spans that band minus `elementPad`, vertically
+  centered, the way other menu bar items' icons do; the numbers center in what remains, and
+  adjacent agents' columns are separated by a plain gap — no divider. The
+  `draw(at:)` in the `NSImage.lockFocus` context is **non-flipped**: a text run's line box
+  *bottom* lands at its point (baseline = `point.y + |descender|`), which is why the tucked
+  runs' points can be negative (their boxes' empty descender space hangs below the bitmap) and
+  why the baseline math in `perAgentDiagonal` is written bottom-up.
 - Pace colors are adaptive (light/dark variants) via `NSColor(name: dynamicProvider:)`.
 - **The appearance observation is a hint, never a value source.** The bar image is a baked,
   non-template bitmap, and *replacing the status button's image re-fires `effectiveAppearance`
