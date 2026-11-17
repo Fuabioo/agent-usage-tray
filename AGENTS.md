@@ -116,7 +116,7 @@ A second Claude Code login (e.g. a personal account under `$CLAUDE_CONFIG_DIR=~/
 
 When a `Pool` carries a `budget` (set via `Window::with_budget()`), consumption is measured against the recurring allowance rather than the full `total`. The part of `total` beyond `budget` is surplus — it only counts as "used" once the daily allowance is spent. This means `used_pct` can exceed 100% ("extra usage").
 
-- **Hyper**: `total` = permanent credits + 250 daily. `budget` = 250 (the daily recharge). Spending 100 of your 250 daily grant → 40% used. Spending 300 → 120% used (50 into surplus). The label is `"credits"` (a lowercase noun matching the other windows' convention) and the pool shows the raw balance. `total` is inferred (see *Hyper's permanent-credit baseline*) unless `total_credits` states it.
+- **Hyper**: `total` = prepaid credits + the 180 weekly allowance. `budget` = 180 (the weekly allowance). Spending 90 of the week's 180 → 50% used. Spending 216 → 120% used (36 into prepaid). The API's `balance` is allowance left + prepaid; Hyper's five-hour session cap is not in it and is not exposed anywhere, so no session window is reported. The label is `"credits"` (a lowercase noun matching the other windows' convention) and the pool shows the raw balance. `total` is inferred (see *Hyper's permanent-credit baseline*) unless `total_credits` states it.
 - **Without** `budget` (e.g. a pure consumable pool): `used_pct = (total - remaining) / total * 100` as before.
 
 ### Settings precedence and the CLI config file
@@ -224,7 +224,7 @@ brake, so `core/src/history.rs` reconstructs one from successive readings.
   `syncConfig(allowClear: true)` at launch off settings nobody touched.
 - **`hyperResetTime` must be passed as `--reset-time`, not left to the environment.** A `.app`
   launched from Finder inherits no shell profile, so `HYPER_RESET_TIME` exported in `.zshrc` is
-  invisible to it and Hyper would silently fall back to midnight UTC. The Settings field is
+  invisible to it and Hyper would silently fall back to Sunday midnight UTC. The Settings field is
   debounced (600 ms) before triggering a refresh — it's typed a character at a time, and every
   intermediate value would otherwise spawn a CLI run and flash a parse error. Its inline feedback
   reads `controller.agents`, **not** `merged`, because the stale fallback substitutes the last
@@ -358,25 +358,27 @@ On failure: valid JSON with a non-null `error` object and exit code ≠ 0.
 12. **Only `Weekly` windows are sampled.** Session windows brake on their own and credit pools
     already carry a real `burn_per_day` from their provider, so neither is tracked.
 7. **`--status` output is NOT a stable contract** — it's human-readable. Only the JSON output is the stable contract.
-8. **Hyper's permanent-credit baseline** — Stored at `~/.cache/agent-usage/hyper.permanent.json`
+8. **Hyper's permanent-credit baseline** — Stored at `~/.cache/agent-usage/hyper.prepaid.json`
    (uses `core::cache::cache_dir()` shared path). A `{ value, cycle }` record keyed by reset unix
-   timestamp. On each new 24h cycle it is re-derived as `max(previous, balance - 250)` — floored
-   at the last known value so a mid-cycle cold start doesn't undercount. **Every reading then
-   clamps it into `[balance - 250, balance]`** (`clamp_permanent`), the only band a balance
-   permits: permanent credits are part of the balance, and no more than one grant of the balance
-   can be non-permanent. The upper bound is what lets it come *down* — spending past the daily
-   grant eats permanent credits, and a floor-only baseline reported the pre-spend pool forever
-   (a 1600 pool stayed 1600 after an overspend left 1277, so every later day showed a phantom
-   deficit). `total_credits` bypasses the inference entirely, and is clamped into the same band.
-9. **Hyper's window has no `burn_per_day`** — The grant is fixed at 250/day, not an observed burn rate, so there's nothing to project. `depletes_before_reset` can still be `true` when the pool is nearly empty.
+   timestamp. On each new weekly cycle it is re-derived as `max(previous, balance - 180)` —
+   floored at the last known value so a mid-cycle cold start doesn't undercount. **Every reading
+   then clamps it into `[balance - 180, balance]`** (`clamp_permanent`), the only band a balance
+   permits: prepaid credits are part of the balance, and no more than one allowance of the
+   balance can be non-prepaid. The upper bound is what lets it come *down* — spending past the
+   weekly allowance eats prepaid credits, and a floor-only baseline reported the pre-spend pool
+   forever (a 1530 pool stayed 1530 after an overspend left 1277, so every later week showed a
+   phantom deficit). `total_credits` bypasses the inference entirely, and is clamped into the
+   same band.
+9. **Hyper's window has no `burn_per_day`** — The allowance is fixed at 180/week, not an observed burn rate, so there's nothing to project. `depletes_before_reset` can still be `true` when the pool is nearly empty.
 10. **Malformed `HYPER_RESET_TIME` is a hard error** — returns `UsageError::Unsupported` so typos
-    don't silently shift the reset to midnight UTC. A **bare `HH:MM` still means UTC**: never
-    reinterpret it as local, or every existing config silently shifts by its UTC offset. A
-    zoned value resolves per local calendar day (`next_reset_in`), not by adding 24h, so a
-    wall-clock reset holds through a DST change instead of sliding an hour.
-13. **Hyper's reset cannot be auto-detected.** The API returns only `{"balance"}`, and a daily
-    refresh is indistinguishable from a *credit purchase* — both are the balance jumping upward.
+    don't silently move the reset. The grammar is `[weekday] HH:MM [zone]`; an omitted weekday
+    means **Sunday** and an omitted zone means **UTC** — never reinterpret a bare time as local,
+    or every existing config silently shifts by its UTC offset. A zoned value resolves per local
+    calendar day (`next_reset_in`), not by adding 7 days, so a wall-clock reset holds through a
+    DST change instead of sliding an hour.
+13. **Hyper's reset cannot be auto-detected.** The API returns only `{"balance"}`, and a weekly
+    refill is indistinguishable from a *credit purchase* — both are the balance jumping upward.
     Inferring the reset from balance jumps would mis-key the permanent baseline (`resolve_permanent`
     is keyed on the reset instant) every time credits are bought. It stays configured, not guessed.
     The same one-number limit is why the pool size is only ever an inference, and why
-    `total_credits` exists to state it: the balance never says how much of itself is today's grant.
+    `total_credits` exists to state it: the balance never says how much of itself is this week's allowance.

@@ -37,13 +37,13 @@ pub struct FetchOptions {
     /// key can come from a config file as well as the environment — which is what lets an agent
     /// survive a reboot, since an app started by launchd inherits no shell profile.
     pub api_key: Option<String>,
-    /// When an agent's daily cycle resets, for the agents whose API doesn't report it (currently
-    /// Hyper, whose `/v1/credits` returns only a balance). `HH:MM` with an optional zone — see
+    /// When an agent's weekly cycle resets, for the agents whose API doesn't report it (currently
+    /// Hyper, whose `/v1/credits` returns only a balance). `[weekday] HH:MM` with an optional zone — see
     /// the Hyper provider. Takes precedence over whatever environment variable the provider would
     /// otherwise read, so a GUI can own the setting instead of requiring a shell export.
     pub reset_time: Option<String>,
     /// Size of the credit pool for agents whose API reports only a balance (currently Hyper):
-    /// permanent credits plus the recurring daily grant. `None` leaves the provider to infer it
+    /// prepaid credits plus the recurring weekly allowance. `None` leaves the provider to infer it
     /// from successive balances, which is all it can do unaided and which can drift.
     pub total_credits: Option<u32>,
 }

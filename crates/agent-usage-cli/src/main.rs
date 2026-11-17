@@ -98,14 +98,14 @@ struct Cli {
     #[arg(long)]
     no_keychain: bool,
 
-    /// When the daily cycle resets, for agents whose API doesn't report it (currently `hyper`).
-    /// `HH:MM` plus an optional zone — UTC when omitted, or `Z`, `local`, or `±HH:MM`
-    /// (e.g. `08:00 local`). Overrides `HYPER_RESET_TIME`.
-    #[arg(long, value_name = "HH:MM[ ZONE]")]
+    /// When the weekly cycle resets, for agents whose API doesn't report it (currently `hyper`).
+    /// `[WEEKDAY] HH:MM [ZONE]` — Sunday and UTC when omitted; zone `Z`, `local`, or `±HH:MM`
+    /// (e.g. `Sun 00:00 UTC`). Overrides `HYPER_RESET_TIME`.
+    #[arg(long, value_name = "[WEEKDAY ]HH:MM[ ZONE]")]
     reset_time: Option<String>,
 
     /// Size of the credit pool, for agents whose API reports only a balance (currently `hyper`):
-    /// permanent credits plus the daily grant. Left unset the provider infers it from successive
+    /// prepaid credits plus the weekly allowance. Left unset the provider infers it from successive
     /// balances; set it when you know the number and the inference has drifted. An empty value
     /// clears the stored setting and goes back to inferring.
     #[arg(long, value_name = "N")]

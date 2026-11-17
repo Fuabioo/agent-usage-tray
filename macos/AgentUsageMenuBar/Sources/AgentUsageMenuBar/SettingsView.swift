@@ -122,7 +122,8 @@ struct SettingsView: View {
             agentHeader("hyper", "Charm Hyper")
 
             Text("Hyper's API answers with a bare balance — no reset instant, no pool size — so "
-                 + "both have to be told here.")
+                 + "both have to be told here. It doesn't report the five-hour session "
+                 + "either, so that limit isn't shown.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -250,17 +251,17 @@ struct SettingsView: View {
         .pointingHandCursor()
     }
 
-    /// When Hyper's daily credits refresh. Its API reports only a balance — no reset instant — so
+    /// When Hyper's weekly allowance refills. Its API reports only a balance — no reset instant — so
     /// this is the one thing the app has to be told. It lives here rather than in
     /// `HYPER_RESET_TIME` because an app launched from Finder inherits no shell profile, so a
     /// shell export never reaches it.
     private var creditsResetField: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("08:00 local", text: $settings.hyperResetTime)
+            TextField("Sun 00:00 UTC", text: $settings.hyperResetTime)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 200)
-            Text("Time of day your credits refresh — `HH:MM`, optionally with a zone: "
-                 + "`local`, `Z`, or `±HH:MM`. A bare time means UTC.")
+            Text("When your weekly allowance refills — `[weekday] HH:MM [zone]`, zone "
+                 + "`local`, `Z`, or `±HH:MM`. Weekday defaults to Sunday, zone to UTC.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             creditsResetFeedback
@@ -288,22 +289,22 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         } else if settings.hyperResetTime.isEmpty {
-            Text("Unset — falls back to HYPER_RESET_TIME, then midnight UTC.")
+            Text("Unset — falls back to HYPER_RESET_TIME, then Sunday midnight UTC.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
     }
 
     /// The size of Hyper's credit pool. Its API returns a bare balance, so the CLI has to infer
-    /// the ceiling that balance sits in — from how the balance moves across daily refreshes. That
+    /// the ceiling that balance sits in — from how the balance moves across weekly refills. That
     /// inference is good but not infallible (a purchase and a refresh look alike, and a balance
-    /// never says how much of itself is the day's grant), so this states it outright.
+    /// never says how much of itself is the week's allowance), so this states it outright.
     private var creditsTotalField: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField(creditsTotalPlaceholder, text: $settings.hyperTotalCredits)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 200)
-            Text("Permanent credits plus the daily grant — the number your balance is shown "
+            Text("Prepaid credits plus the weekly allowance — the number your balance is shown "
                  + "against. Leave empty to let it be inferred from the balance.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -127,19 +127,24 @@ bar app that's **Settings → Charm Hyper → API key**, for the CLI it's
 
 <br/>
 
-Hyper's API reports only a balance — no reset instant — so it has to be told when your daily
-credits refresh. In the menu bar app that's **Settings → Charm Hyper → Credits reset**; for the CLI
-it's the config file (below), `--reset-time`, or the `HYPER_RESET_TIME` env var. The format is
-`HH:MM` plus an optional zone, where a bare value means UTC — `"08:00 local"` tracks 8am on your
-machine's clock through a DST change, where a hand-converted UTC value would drift an hour twice a
-year. Unset defaults to midnight UTC; a malformed value is a hard error rather than a silent
+Hyper's API reports only a balance (the weekly allowance left plus your prepaid credits). It
+gives no reset instant, so you have to tell it when your weekly allowance refills. In the menu bar
+app that's **Settings → Charm Hyper → Credits reset**; for the CLI it's the config file (below),
+`--reset-time`, or the `HYPER_RESET_TIME` env var. The format is `[weekday] HH:MM [zone]`. The
+weekday defaults to Sunday and the zone to UTC. `"Mon 08:00 local"` tracks 8am on your machine's
+clock through a DST change, where a hand-converted UTC value would drift an hour twice a year.
+Unset defaults to Sunday midnight UTC; a malformed value is a hard error rather than a silent
 fallback.
 
-For the same reason — a lone balance, with no way to tell how much of it is today's grant — the
-size of the pool that balance sits in is inferred from how it moves across refreshes. That is
-self-correcting but not omniscient, so it can also be stated outright: **Settings → Charm Hyper →
-Credits total** in the app, `--total-credits` or the config file for the CLI. It's permanent credits
-plus the daily grant — the number your balance is shown against. Leave it unset to keep inferring.
+For the same reason (a lone balance, with no way to tell how much of it is this week's
+allowance), the size of the pool that balance sits in is inferred from how it moves across
+refills. That self-corrects but can still be wrong, so you can also state it outright:
+**Settings → Charm Hyper → Credits total** in the app, `--total-credits` or the config file for
+the CLI. It's your prepaid credits plus the weekly allowance, the number your balance is shown
+against. Leave it unset to keep inferring.
+
+Hyper's five-hour session cap isn't in the balance and the API doesn't expose it, so it isn't
+shown.
 
 </details>
 
@@ -152,8 +157,8 @@ CLI's own baseline, so a frontend passing its settings as arguments always wins:
 // ~/.config/agent-usage/config.json   ($XDG_CONFIG_HOME honored)
 {
   "work_days": 4,               // 1–7; daily_budget defaults to 100 / work_days
-  "reset_time": "08:00 local",  // HH:MM + optional zone: `local`, `Z`, or ±HH:MM
-  "total_credits": 1600,        // credit-pool size; unset = infer it from the balance
+  "reset_time": "Sun 00:00",    // [weekday] HH:MM [zone]: `local`, `Z`, or ±HH:MM
+  "total_credits": 515,         // credit-pool size; unset = infer it from the balance
   "hyper_api_key": "…"          // written by `config --save`, never printed back
 }
 ```

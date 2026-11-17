@@ -105,17 +105,17 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(creditDisplay.rawValue, forKey: Keys.creditDisplay) }
     }
 
-    /// When Hyper's daily credits refresh. Hyper's API reports only a balance — no reset — so this
+    /// When Hyper's weekly allowance refills. Hyper's API reports only a balance — no reset — so this
     /// has to be told to us. Owned here rather than left to `HYPER_RESET_TIME` because an app
     /// launched from Finder inherits no shell profile, so a shell export is invisible to it.
-    /// Empty means "fall back to the environment variable" (and then to midnight UTC).
+    /// Empty means "fall back to the environment variable" (and then to Sunday midnight UTC).
     @Published var hyperResetTime: String {
         didSet { defaults.set(hyperResetTime, forKey: Keys.hyperResetTime) }
     }
 
-    /// The size of Hyper's credit pool: permanent credits plus the daily grant. Its API reports
+    /// The size of Hyper's credit pool: prepaid credits plus the weekly allowance. Its API reports
     /// only a balance, so the CLI otherwise infers the pool from successive readings — an
-    /// inference that can drift, since a balance never says how much of itself is the day's grant.
+    /// inference that can drift, since a balance never says how much of itself is the week's allowance.
     /// Empty means "keep inferring"; a number states the ceiling outright.
     @Published var hyperTotalCredits: String {
         didSet { defaults.set(hyperTotalCredits, forKey: Keys.hyperTotalCredits) }

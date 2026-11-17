@@ -61,12 +61,12 @@ pub struct Config {
     /// Expected usage percentage per work day.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily_budget: Option<f64>,
-    /// When the daily cycle resets for agents whose API doesn't report it (`HH:MM` with an
+    /// When the weekly cycle resets for agents whose API doesn't report it (`[weekday] HH:MM` with an
     /// optional zone — see the Hyper provider).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reset_time: Option<String>,
     /// Size of the credit pool for agents whose API reports only a balance (currently Hyper):
-    /// permanent credits plus the recurring daily grant.
+    /// prepaid credits plus the recurring weekly allowance.
     ///
     /// The provider otherwise infers this from successive balances, which is an inference from a
     /// single number and can drift — chiefly because a balance never says how much of it is the
