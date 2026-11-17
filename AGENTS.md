@@ -32,7 +32,7 @@ macos/build-app.sh --debug            # debug
 open macos/build/AgentUsageMenuBar.app
 ```
 
-No CI, no Makefile, no `rust-toolchain.toml`. The macOS app requires Xcode Command Line Tools (Swift toolchain) in addition to Rust.
+No CI, no Makefile, no `rust-toolchain.toml`. The macOS app requires Xcode Command Line Tools (Swift toolchain) in addition to Rust. CLT ships no `SwiftUIMacros` plugin, which the macOS 27 SDK needs for `@State`, so `build-app.sh` falls back to the newest pre-27 SDK when the plugin is missing and `SDKROOT` is unset.
 
 ## Workspace crate graph
 

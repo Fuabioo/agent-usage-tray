@@ -25,6 +25,24 @@ echo "==> Building agent-usage CLI ($CONFIG)"
 ( cd "$ROOT" && cargo build $CARGO_FLAG -p agent-usage-cli )
 CLI="$ROOT/target/$CARGO_DIR/agent-usage"
 
+# The macOS 27 SDK turns SwiftUI's `@State` into a macro whose compiler plugin (SwiftUIMacros)
+# Command Line Tools does not ship, so a CLT-only machine can't compile against it. When the plugin
+# is missing and no SDKROOT was chosen, build against the newest installed pre-27 SDK instead.
+pick_sdk() {
+  local plugins
+  plugins="$(dirname "$(xcrun -f swift)")/../lib/swift/host/plugins"
+  [ -e "$plugins/libSwiftUIMacros.dylib" ] && return
+  ls -d "$(xcode-select -p)"/SDKs/MacOSX2[0-6]*.sdk 2>/dev/null | sort -V | tail -1
+}
+
+if [ -z "${SDKROOT:-}" ]; then
+  FALLBACK_SDK="$(pick_sdk || true)"
+  if [ -n "$FALLBACK_SDK" ]; then
+    export SDKROOT="$FALLBACK_SDK"
+    echo "==> SwiftUIMacros plugin missing; building against $(basename "$SDKROOT")"
+  fi
+fi
+
 echo "==> Building AgentUsageMenuBar ($CONFIG)"
 swift build -c "$CONFIG" --package-path "$PKG"
 APP_BIN="$(swift build -c "$CONFIG" --package-path "$PKG" --show-bin-path)/AgentUsageMenuBar"
