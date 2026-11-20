@@ -290,6 +290,30 @@ agent-usage claude --no-cache          # never read/write the cache
 
 </details>
 
+<details>
+<summary><b>A second Claude login</b> — e.g. a personal account under <code>~/.claude-personal</code></summary>
+
+<br/>
+
+Point `--config-dir` at that login's config directory, and give it its own `--id` so its cache
+doesn't overwrite the main account's (`--label` only names it in the output):
+
+```sh
+agent-usage claude --json --config-dir ~/.claude-personal \
+  --keychain-service "Claude Code-credentials-<suffix>" --id claude-personal --label Personal
+```
+
+On macOS a login usually has no `.credentials.json`, so the CLI reads the Keychain instead, and
+**`--keychain-service` must name that login's entry**. Without it the CLI reads the default
+`Claude Code-credentials` entry and silently reports the *main* account's usage. To find the
+entry's name:
+
+```sh
+security dump-keychain | grep -o '"Claude Code-credentials[^"]*"' | sort -u
+```
+
+</details>
+
 **Caching.** JSON results are cached per agent at `~/.cache/agent-usage/<id>.json`. Repeated
 calls within `--cache-ttl` (default 60s) reuse the cached snapshot instead of re-hitting the
 usage source — this keeps the app's frequent polling from tripping API rate limits. On a
@@ -430,7 +454,7 @@ Chrome) and tinted per pace, so glyphs stay crisp at any size.
 
 | Priority | Component                         | State                                            |
 | -------- | --------------------------------- | ------------------------------------------------ |
-| 1        | **`agent-usage` CLI**             | ✅ working — Claude (live), Codex (live), Hyper (opt-in), `all` |
+| 1        | **`agent-usage` CLI**             | ✅ working — Claude (live), Codex (live), Hyper (opt-in), `all`; on Homebrew |
 | 2        | **macOS menu bar app**            | ✅ working — multi-agent bar + dashboard + settings |
 | 3        | Linux COSMIC panel applet         | ⏳ planned (Rust/libcosmic, links the core)       |
 
@@ -454,7 +478,21 @@ cargo test               # runs core + provider + CLI tests
 cargo run -p agent-usage-cli -- claude --json
 ```
 
-Requires a Rust toolchain. (No `just`/Homebrew packaging yet — that lands later.)
+Requires a Rust toolchain.
+
+### Releasing the CLI to Homebrew
+
+The CLI ships through the public tap [`fuabioo/tap`](https://github.com/Fuabioo/homebrew-tap)
+as the `agent-usage` formula (Apple Silicon only). To cut a release:
+
+1. Bump `version` under `[workspace.package]` in the root `Cargo.toml`.
+2. Commit and push to `main`.
+3. Run `scripts/brew-release.sh`.
+
+The script builds a release binary with `$HOME` remapped out of its embedded paths, attaches it
+to a `vX.Y.Z` release on this repo, and rewrites `Formula/agent-usage.rb` on the tap. It refuses
+uncommitted changes, a HEAD that isn't on `origin/main`, and a version that's already released.
+The menu bar app isn't part of the formula; build it with `macos/build-app.sh`.
 
 ## 📄 License
 
