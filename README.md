@@ -82,8 +82,9 @@ login, and everything Hyper's API can't report about itself:
 
 ## 📦 Install
 
-No packaged release yet — build from source. It reads your existing Claude Code and Codex
-credentials automatically, so the default two agents need no configuration.
+The menu bar app is built from source; the CLI also ships through Homebrew. It reads your
+existing Claude Code and Codex credentials automatically, so the default two agents need no
+configuration.
 
 ### 1 · macOS menu bar app
 
@@ -103,11 +104,18 @@ open macos/build/AgentUsageMenuBar.app   # adds the menu bar item
 
 ### 2 · CLI only
 
-Needs just Rust:
+On Apple Silicon, install it from Homebrew:
+
+```sh
+brew tap fuabioo/tap && brew trust --formula fuabioo/tap/agent-usage
+brew install fuabioo/tap/agent-usage
+agent-usage all --status                      # human-readable report for every default agent
+```
+
+Or build it with Rust:
 
 ```sh
 cargo install --path crates/agent-usage-cli   # puts `agent-usage` on your PATH
-agent-usage all --status                      # human-readable report for every default agent
 ```
 
 ### 3 · Charm Hyper (opt-in)

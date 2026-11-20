@@ -34,6 +34,8 @@ open macos/build/AgentUsageMenuBar.app
 
 No CI, no Makefile, no `rust-toolchain.toml`. The macOS app requires Xcode Command Line Tools (Swift toolchain) in addition to Rust. CLT ships no `SwiftUIMacros` plugin, which the macOS 27 SDK needs for `@State`, so `build-app.sh` falls back to the newest pre-27 SDK when the plugin is missing and `SDKROOT` is unset.
 
+`scripts/brew-release.sh` publishes the CLI to the public tap (`Fuabioo/homebrew-tap`, formula `agent-usage`): it builds an Apple Silicon binary with `$HOME` remapped out of embedded paths, attaches it to a `vX.Y.Z` release on this repo, and rewrites `Formula/agent-usage.rb` on the tap. Bump `[workspace.package] version` before each release; the script refuses an existing tag, a dirty tree, or a HEAD not on `origin/main`.
+
 ## Workspace crate graph
 
 ```
